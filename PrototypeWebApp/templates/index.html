@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Webnovel Typography Prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Prototype Flow</p>
+          <h1>Webnovel Typography Forge</h1>
+          <p class="hero-text">
+            제목 입력부터 배치 편집, 프롬프트 생성, 샘플 결과 확인까지 한 단계씩 넘기며 진행하는 웹소설 타이포그래피 제작 프로토타입입니다.
+          </p>
+        </div>
+        <div class="hero-note">
+          <span>Title</span>
+          <span>Layout</span>
+          <span>Prompt</span>
+          <span>Samples</span>
+        </div>
+      </header>
+
+      <nav class="wizard-nav" aria-label="Typography wizard steps">
+        <button class="step-chip active" data-step-link="1" type="button">
+          <strong>1</strong>
+          <span>Title</span>
+        </button>
+        <button class="step-chip" data-step-link="2" type="button">
+          <strong>2</strong>
+          <span>Layout Edit</span>
+        </button>
+        <button class="step-chip" data-step-link="3" type="button">
+          <strong>3</strong>
+          <span>Prompt</span>
+        </button>
+        <button class="step-chip" data-step-link="4" type="button">
+          <strong>4</strong>
+          <span>Samples</span>
+        </button>
+      </nav>
+
+      <section class="summary-strip">
+        <div class="summary-pill">
+          <span>현재 제목</span>
+          <strong id="summaryTitle">아직 없음</strong>
+        </div>
+        <div class="summary-pill">
+          <span>레이아웃</span>
+          <strong id="summaryLayout">대기 중</strong>
+        </div>
+        <div class="summary-pill">
+          <span>프롬프트</span>
+          <strong id="summaryPrompt">대기 중</strong>
+        </div>
+        <div class="summary-pill">
+          <span>샘플 수</span>
+          <strong id="summarySamples">3</strong>
+        </div>
+      </section>
+
+      <main class="wizard-main">
+        <section class="step-panel active" data-step="1">
+          <div class="step-header">
+            <p class="panel-kicker">Step 1</p>
+            <h2>제목 입력과 초기 배치 생성</h2>
+            <p>제목을 입력하면 `LayoutModule`이 초기 타이포그래피 배치를 생성합니다.</p>
+          </div>
+          <div class="panel card-panel">
+            <label class="field">
+              <span>웹소설 제목</span>
+              <input id="titleInput" type="text" placeholder="예: 외신에게 집착받는 천재 마법사가 되었다">
+            </label>
+            <button id="generateLayoutButton" class="primary-button">초기 레이아웃 생성</button>
+            <p class="inline-status" id="step1Status">제목을 입력하고 시작하세요.</p>
+          </div>
+          <div class="step-footer">
+            <span class="footer-hint">레이아웃이 생성되면 다음 단계로 이동할 수 있습니다.</span>
+            <button id="step1Next" class="primary-button" type="button" disabled>다음: 배치 편집</button>
+          </div>
+        </section>
+
+        <section class="step-panel" data-step="2">
+          <div class="step-header">
+            <p class="panel-kicker">Step 2</p>
+            <h2>글자별 위치, 크기, 각도 편집</h2>
+            <p>각 글자를 직접 드래그해 조정합니다. 본문 드래그는 이동, 우하단 핸들은 크기, 상단 핸들은 회전입니다.</p>
+          </div>
+          <div class="workspace-grid">
+            <section class="panel editor-panel">
+              <div class="editor-toolbar">
+                <p id="editorStatus">레이아웃이 생성되면 편집기가 활성화됩니다.</p>
+                <button id="resetLayoutButton" class="ghost-button" type="button" disabled>초기 배치로 되돌리기</button>
+              </div>
+              <div class="editor-stage">
+                <svg id="editorSvg" viewBox="0 0 2000 1000" aria-label="Typography layout editor"></svg>
+                <div class="editor-overlay">
+                  <span>Drag letter to move</span>
+                  <span>Drag corner to scale</span>
+                  <span>Drag top handle to rotate</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel inspector-panel">
+              <div class="panel-head compact">
+                <p class="panel-kicker">Selection</p>
+                <h3>Glyph Inspector</h3>
+              </div>
+              <div id="inspectorEmpty" class="inspector-empty">
+                글자를 하나 선택하면 정밀 조정 값이 여기 표시됩니다.
+              </div>
+              <div id="inspectorFields" class="inspector-fields hidden">
+                <div class="glyph-badge">
+                  <span>선택 글자</span>
+                  <strong id="selectedGlyphLabel">가</strong>
+                </div>
+                <label class="field">
+                  <span>X</span>
+                  <input id="glyphXInput" type="range" min="0" max="2000" step="1">
+                </label>
+                <label class="field">
+                  <span>Y</span>
+                  <input id="glyphYInput" type="range" min="0" max="1000" step="1">
+                </label>
+                <label class="field">
+                  <span>크기</span>
+                  <input id="glyphSizeInput" type="range" min="40" max="420" step="1">
+                </label>
+                <label class="field">
+                  <span>각도</span>
+                  <input id="glyphRotationInput" type="range" min="-180" max="180" step="1">
+                </label>
+                <div class="inspector-values">
+                  <span id="glyphValueReadout">x: 0 / y: 0 / size: 0 / rot: 0°</span>
+                </div>
+              </div>
+            </section>
+          </div>
+          <div class="step-footer">
+            <button id="step2Prev" class="ghost-button" type="button">이전</button>
+            <button id="step2Next" class="primary-button" type="button" disabled>다음: 프롬프트 구성</button>
+          </div>
+        </section>
+
+        <section class="step-panel" data-step="3">
+          <div class="step-header">
+            <p class="panel-kicker">Step 3</p>
+            <h2>요소와 스타일 키워드로 프롬프트 생성</h2>
+            <p>요소와 키워드는 비워둘 수 있습니다. 제목과 편집된 흐름을 기준으로 `PromptGenerationModule`이 프롬프트를 생성합니다.</p>
+          </div>
+          <div class="prompt-grid">
+            <section class="panel">
+              <label class="field">
+                <span>넣고 싶은 요소</span>
+                <textarea id="elementsInput" rows="8" placeholder="한 줄에 하나씩 입력&#10;예: tentacles&#10;eldritch magic book"></textarea>
+              </label>
+              <label class="field">
+                <span>스타일 키워드</span>
+                <textarea id="keywordsInput" rows="8" placeholder="한 줄에 하나씩 입력&#10;예: dark fantasy&#10;sharp mystical lettering"></textarea>
+              </label>
+              <button id="generatePromptButton" class="primary-button" type="button">프롬프트 생성</button>
+            </section>
+
+            <section class="panel">
+              <label class="field">
+                <span>생성된 프롬프트</span>
+                <textarea id="promptOutput" rows="18" placeholder="여기에 프롬프트가 생성됩니다. 직접 수정해도 됩니다."></textarea>
+              </label>
+            </section>
+          </div>
+          <div class="step-footer">
+            <button id="step3Prev" class="ghost-button" type="button">이전</button>
+            <button id="step3Next" class="primary-button" type="button" disabled>다음: 샘플 생성</button>
+          </div>
+        </section>
+
+        <section class="step-panel" data-step="4">
+          <div class="step-header">
+            <p class="panel-kicker">Step 4</p>
+            <h2>샘플 생성과 결과 확인</h2>
+            <p>편집된 배치 이미지와 생성된 프롬프트를 기준으로 `ImageGenerationModule`이 샘플 이미지를 생성합니다.</p>
+          </div>
+          <section class="panel">
+            <label class="field">
+              <span>샘플 수</span>
+              <div class="range-row">
+                <input id="sampleCountInput" type="range" min="1" max="4" value="3">
+                <strong id="sampleCountValue">3</strong>
+              </div>
+            </label>
+            <button id="generateSamplesButton" class="primary-button" type="button">샘플 생성</button>
+          </section>
+          <section class="panel samples-panel">
+            <div class="panel-head compact">
+              <p class="panel-kicker">Result</p>
+              <h3>Generated Samples</h3>
+            </div>
+            <div id="samplesGrid" class="samples-grid empty">
+              <p>샘플 생성 결과가 여기에 표시됩니다.</p>
+            </div>
+          </section>
+          <div class="step-footer">
+            <button id="step4Prev" class="ghost-button" type="button">이전</button>
+            <button id="restartFlowButton" class="secondary-button" type="button">처음으로 돌아가기</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

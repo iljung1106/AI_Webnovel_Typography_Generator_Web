@@ -1,0 +1,377 @@
+{
+  "9": {
+    "inputs": {
+      "filename_prefix": "Firered_image_edit_1.1",
+      "images": [
+        "167:126",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "이미지 저장"
+    }
+  },
+  "143": {
+    "inputs": {
+      "image": "a200e628ece361bc1f3fff57834cad14278337fe0dafbcdd8f8b8b2333aefeff.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "이미지 로드"
+    }
+  },
+  "167:120": {
+    "inputs": {
+      "shift": 3.1,
+      "model": [
+        "167:172",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "모델 샘플링 (AuraFlow)"
+    }
+  },
+  "167:123": {
+    "inputs": {
+      "strength": 1.08,
+      "model": [
+        "167:120",
+        0
+      ]
+    },
+    "class_type": "CFGNorm",
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "167:116": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "VAE 로드"
+    }
+  },
+  "167:115": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "CLIP 로드"
+    }
+  },
+  "167:151": {
+    "inputs": {
+      "lora_name": "ij__FireRed11_KoreanTypographyLoRA__KoreanTypography_20.safetensors",
+      "strength_model": 1,
+      "model": [
+        "167:128",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoRA 로드 (모델 전용)"
+    }
+  },
+  "167:128": {
+    "inputs": {
+      "unet_name": "FireRed-Image-Edit-1.1-transformer.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "확산 모델 로드"
+    }
+  },
+  "167:125": {
+    "inputs": {
+      "pixels": [
+        "167:147",
+        0
+      ],
+      "vae": [
+        "167:116",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE 인코드"
+    }
+  },
+  "167:153": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Enable Lightning LoRA?"
+    }
+  },
+  "167:118": {
+    "inputs": {
+      "prompt": "Transform this plain Korean text into a decorative Korean webnovel title typography artwork. Keep original text visible.\n\nELEMENTS TO ADD:\n- tentacles\n- big eldritch magic book\n- stylized eyes around text\n- chains strongly coiling text\n\nSTYLE:\n- Dark fantasy occult style. The lettering is sharp with mystical and slightly jagged accents.\n- Chaotic yet structured interlaced text character composition.\n- Clean, sharp edges with flat geometric shapes.\n- Solid black glyphs on a clean white background.\n\nChange character composition dynamically. White glow around text.",
+      "clip": [
+        "167:115",
+        0
+      ],
+      "vae": [
+        "167:116",
+        0
+      ],
+      "image1": [
+        "167:147",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus (Positive)"
+    }
+  },
+  "167:117": {
+    "inputs": {
+      "prompt": "malformed, low quality, overlapping, photo, messy sketch, change all text, blurry, black background, remove text, overlapping image, lines added to text, intricate, highly detailed, replace character,",
+      "clip": [
+        "167:115",
+        0
+      ],
+      "vae": [
+        "167:116",
+        0
+      ],
+      "image1": [
+        "167:147",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus"
+    }
+  },
+  "167:126": {
+    "inputs": {
+      "samples": [
+        "167:177",
+        0
+      ],
+      "vae": [
+        "167:116",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE 디코드"
+    }
+  },
+  "167:147": {
+    "inputs": {
+      "image": [
+        "143",
+        0
+      ]
+    },
+    "class_type": "FluxKontextImageScale",
+    "_meta": {
+      "title": "Flux Kontext 이미지 스케일"
+    }
+  },
+  "167:172": {
+    "inputs": {
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors",
+      "strength_model": 1,
+      "model": [
+        "167:151",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoRA 로드 (모델 전용)"
+    }
+  },
+  "167:177": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 47819781505887,
+      "steps": 5,
+      "cfg": 1.6,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 12,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "167:206",
+        0
+      ],
+      "positive": [
+        "167:118",
+        0
+      ],
+      "negative": [
+        "167:212",
+        0
+      ],
+      "latent_image": [
+        "167:205",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "고급 KSampler"
+    }
+  },
+  "167:200": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSampler (선택)"
+    }
+  },
+  "167:204": {
+    "inputs": {
+      "image": [
+        "167:147",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "이미지 크기 가져오기"
+    }
+  },
+  "167:205": {
+    "inputs": {
+      "width": [
+        "167:204",
+        0
+      ],
+      "height": [
+        "167:204",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "빈 잠재 이미지"
+    }
+  },
+  "167:206": {
+    "inputs": {
+      "scale": 0.7,
+      "model": [
+        "167:207",
+        0
+      ]
+    },
+    "class_type": "PerturbedAttentionGuidance",
+    "_meta": {
+      "title": "교란 어텐션 유도 (PAG)"
+    }
+  },
+  "167:207": {
+    "inputs": {
+      "multiplier": 0.84,
+      "model": [
+        "167:123",
+        0
+      ]
+    },
+    "class_type": "RescaleCFG",
+    "_meta": {
+      "title": "CFG 리스케일"
+    }
+  },
+  "167:208": {
+    "inputs": {
+      "pixels": [
+        "167:210",
+        0
+      ],
+      "vae": [
+        "167:116",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE 인코드"
+    }
+  },
+  "167:209": {
+    "inputs": {
+      "image": "6696d264d1d7748f85df80410c3727a09ff8156578c022db372c930cb4187642.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "이미지 로드"
+    }
+  },
+  "167:210": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "width": [
+        "167:204",
+        0
+      ],
+      "height": [
+        "167:204",
+        1
+      ],
+      "crop": "disabled",
+      "image": [
+        "167:209",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "이미지 확대"
+    }
+  },
+  "167:211": {
+    "inputs": {
+      "blend_factor": 0.5,
+      "samples1": [
+        "167:208",
+        0
+      ],
+      "samples2": [
+        "167:125",
+        0
+      ]
+    },
+    "class_type": "LatentBlend",
+    "_meta": {
+      "title": "잠재 데이터 연산 (혼합)"
+    }
+  },
+  "167:212": {
+    "inputs": {
+      "multiplier": 1,
+      "conditioning": [
+        "167:117",
+        0
+      ]
+    },
+    "class_type": "ConditioningMultiply",
+    "_meta": {
+      "title": "ConditioningMultiply"
+    }
+  }
+}
