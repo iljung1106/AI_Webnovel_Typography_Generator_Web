@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TypoEffector</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="panel">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <h1>TypoEffector</h1>
+            <p>Mask-based WebGL material renderer</p>
+          </div>
+        </div>
+
+        <label class="drop-zone compact" for="backgroundInput">
+          <input id="backgroundInput" type="file" accept="image/png,image/webp,image/jpeg,image/svg+xml,.svg" />
+          <span>1. Load background image</span>
+        </label>
+
+        <label class="drop-zone" for="imageInput">
+          <input id="imageInput" type="file" accept="image/png,image/webp,image/jpeg,image/svg+xml,.svg" />
+          <span>2. Upload transparent black typography image</span>
+        </label>
+
+        <button id="demoButton" type="button">Load Demo Mask</button>
+
+        <section class="control-group">
+          <label for="effectSelect">Effect</label>
+          <select id="effectSelect">
+            <option value="gemstone">Gemstone</option>
+            <option value="metal">Metal</option>
+          </select>
+        </section>
+
+        <section class="control-group">
+          <label for="presetSelect">Preset</label>
+          <select id="presetSelect"></select>
+        </section>
+
+        <section class="control-group">
+          <label for="maskMode">Mask source</label>
+          <select id="maskMode">
+            <option value="luminance">Black luminance</option>
+            <option value="alpha">Alpha</option>
+            <option value="alpha-luminance">Alpha + black luminance</option>
+          </select>
+        </section>
+
+        <section class="control-group">
+          <label>Global light</label>
+          <section class="control-grid" id="globalControls"></section>
+        </section>
+
+        <section class="control-grid" id="controls"></section>
+        <section class="control-group">
+          <label>Layer effects</label>
+          <section class="control-grid" id="layerControls"></section>
+        </section>
+
+        <section class="control-group">
+          <label>Performance</label>
+          <section class="control-grid" id="performanceControls"></section>
+        </section>
+
+        <section class="button-row export-grid">
+          <button id="resetButton" type="button">Reset</button>
+          <button id="exportCompositeButton" type="button">Export Composite</button>
+          <button id="exportMaterialButton" type="button">Export Type Layer</button>
+          <button id="exportGlowButton" type="button">Export Glow</button>
+          <button id="exportShadowButton" type="button">Export Shadow</button>
+        </section>
+      </aside>
+
+      <section class="stage">
+        <div class="toolbar">
+          <div class="segmented" role="group" aria-label="Preview background">
+            <button class="active" type="button" data-bg="checker">Checker</button>
+            <button type="button" data-bg="dark">Dark</button>
+            <button type="button" data-bg="light">Light</button>
+          </div>
+          <div class="segmented" role="group" aria-label="Canvas zoom">
+            <button type="button" id="zoomOutButton">-</button>
+            <button type="button" id="zoomResetButton">100%</button>
+            <button type="button" id="zoomInButton">+</button>
+          </div>
+          <div class="meta" id="imageMeta">No image loaded</div>
+        </div>
+
+        <div class="canvas-wrap checker" id="canvasWrap">
+          <canvas id="renderCanvas" class="source-canvas" width="1280" height="720"></canvas>
+          <canvas id="previewCanvas" width="1280" height="720"></canvas>
+          <div id="selectionOverlay" class="selection-overlay" hidden>
+            <span class="selection-handle nw"></span>
+            <span class="selection-handle ne"></span>
+            <span class="selection-handle se"></span>
+            <span class="selection-handle sw"></span>
+            <span class="selection-rotate"></span>
+          </div>
+          <div class="empty-state" id="emptyState">
+            <strong>Drop in a mask image</strong>
+            <span>Transparent background with black shape pixels works best.</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

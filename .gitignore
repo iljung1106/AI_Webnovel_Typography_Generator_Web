@@ -30,8 +30,10 @@ outputs/
 output/
 generated/
 artifacts/
+worker_output/
 *.tmp
 *.temp
+TypoEffector/.git/
 
 # Node / frontend tooling
 node_modules/
@@ -39,11 +41,13 @@ dist/
 build/
 .vite/
 .next/
+.npm-cache/
 coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.tsbuildinfo
 
 # IDE and OS files
 .idea/
@@ -53,6 +57,12 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Office temporary files
+~$*.docx
+
+# Local system/provider configuration
+pkcs11.txt
 
 # Logs
 *.log

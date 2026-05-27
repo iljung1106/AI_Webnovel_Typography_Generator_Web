@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+
+class UserContext(BaseModel):
+    user_id: UUID
+
+
+class ProjectCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    selected_genre_id: UUID | None = None
+
+
+class ProjectResponse(BaseModel):
+    id: UUID
+    title: str
+    status: str
+    selected_genre_id: UUID | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class VersionCreate(BaseModel):
+    title_text: str = Field(min_length=1, max_length=160)
+    genre_id: UUID | None = None
+    cover_asset_id: UUID | None = None
+
+
+class VersionPatch(BaseModel):
+    layout_json: dict[str, Any] | None = None
+    style_input_json: dict[str, Any] | None = None
+    style_resolved_json: dict[str, Any] | None = None
+    selected_candidate_id: UUID | None = None
+    effect_settings_json: dict[str, Any] | None = None
+    cover_placement_json: dict[str, Any] | None = None
+
+
+class ProjectVersionResponse(BaseModel):
+    id: UUID
+    project_id: UUID
+    version_number: int | None = None
+    title_text: str
+    genre_id: UUID | None = None
+    cover_asset_id: UUID | None = None
+    layout_json: dict[str, Any] = Field(default_factory=dict)
+    style_input_json: dict[str, Any] = Field(default_factory=dict)
+    style_resolved_json: dict[str, Any] = Field(default_factory=dict)
+    selected_candidate_id: UUID | None = None
+    effect_settings_json: dict[str, Any] = Field(default_factory=dict)
+    cover_placement_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+JobType = Literal[
+    "cover_analysis",
+    "layout_generation",
+    "style_resolution",
+    "typography_generation",
+    "export",
+    "asset_cleanup",
+]
+
+
+class JobCreate(BaseModel):
+    project_id: UUID
+    version_id: UUID
+    type: JobType
+    input_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobResponse(BaseModel):
+    id: UUID
+    project_id: UUID
+    version_id: UUID
+    type: JobType
+    status: str
+    result_json: dict[str, Any] = Field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class SignedUrlResponse(BaseModel):
+    asset_id: UUID
+    url: str
+    expires_in: int
+
+
+AssetType = Literal[
+    "cover",
+    "layout_png",
+    "candidate",
+    "transparent_bw",
+    "final_export",
+    "advanced_png",
+    "layer_zip",
+]
+
+
+class SignedUploadCreate(BaseModel):
+    project_id: UUID
+    version_id: UUID | None = None
+    type: AssetType = "cover"
+    filename: str = Field(min_length=1, max_length=180)
+    mime_type: str = Field(min_length=1, max_length=120)
+    size_bytes: int | None = Field(default=None, ge=0)
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    storage_bucket: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class SignedUploadResponse(BaseModel):
+    asset_id: UUID
+    storage_bucket: str
+    storage_path: str
+    url: str
+    expires_in: int

@@ -6,10 +6,8 @@ OpenRouter-backed prompt generation for Korean webnovel typography rendering.
 This module uses OpenRouter's OpenAI-compatible chat completions API with:
     google/gemini-3.1-flash-lite-preview
 
-It converts:
-    - style keywords
-    - mandatory decorative elements
-into an English prompt tailored for the typography image workflow.
+It converts short user style cues into an English prompt tailored for the
+typography image workflow.
 """
 
 from __future__ import annotations
@@ -34,17 +32,21 @@ _MODEL = "google/gemini-3.1-flash-lite-preview"
 _API_URL = "https://openrouter.ai/api/v1/chat/completions"
 _DEFAULT_TIMEOUT = 60
 _OPENING_LINE = "Transform this plain Korean text into a decorative Korean webnovel title typography artwork."
-_ENDING_LINE = "Change character composition dynamically. White glow around text."
+_ENDING_LINE = "Change character composition dynamically while keeping a pure black silhouette vector look."
+_BLACK_VECTOR_RULE = (
+    "The result must be pure black silhouette vector typography: solid black shapes on a plain white background, "
+    "with no color, no texture, no lighting, no shadow, no glow, no gradient, and no material effect."
+)
 
 _SYSTEM_PROMPT = """You write English prompts for a Korean webnovel title typography image-edit model.
 
 Return exactly one final prompt and nothing else.
 Do not use markdown fences.
 Do not explain your reasoning.
-Write concrete visual instructions.
-Preserve all mandatory elements explicitly.
-Do not add instructions about glow, shadow, lighting, color, gradients, or colored backgrounds,
-except for the exact final sentence that must remain unchanged.
+Use short English tokens or short English phrases, not descriptive sentences.
+Do not copy Korean source words, raw user input, or parenthetical translations.
+The output must always be pure black silhouette vector typography.
+Do not add glow, shadow, lighting, color, gradients, textures, material effects, or colored backgrounds.
 Use the exact section labels:
 ELEMENTS TO ADD:
 STYLE:
@@ -54,74 +56,78 @@ _FEW_SHOT_EXAMPLES = """Prompt example A:
 Transform this plain Korean text into a decorative Korean webnovel title typography artwork.
 
 ELEMENTS TO ADD:
-- Fragments on the first letter.
-- Tiara on middle right.
-- Big pocket watch with clockworks. On left.
-- Modern katana vertically embedded on bottom right. Sword replacing text.
-- Cityscape.
+- fracture marks
+- slim tiara
+- pocket watch
+- vertical katana
+- city skyline
 
 STYLE:
-- Modern style. The lettering is thick and speedy tilted italic.
-- Rectangular and octagonal.
-- Clean edges.
-- Small fractured texture on first character's top left side.
-- Modern factory style and dynamic interlaced text character composition.
-- Angled and straight.
-- Solid black glyphs on a clean white background.
+- thick italic lettering
+- angular geometry
+- clean edges
+- dynamic interlacing
+- pure black silhouette vector
+- plain white background
 
-Change character composition dynamically. White glow around text.
+Change character composition dynamically while keeping a pure black silhouette vector look.
 
 Prompt example B:
 Transform this plain Korean text into a decorative Korean webnovel title typography artwork.
 
 ELEMENTS TO ADD:
-- Earth globe icon.
-- Black rough hands at side.
-- Four pointed stars around text.
-- Cursive line on first letter.
+- globe icon
+- rough hands
+- four-point stars
+- cursive line
 
 STYLE:
-- Sharp, rough gothic font with jagged edges.
-- Jagged irregular random composition.
-- Solid black glyphs on a clean white background.
+- rough gothic
+- jagged edges
+- irregular composition
+- pure black silhouette vector
+- plain white background
 
-Change character composition dynamically. White glow around text.
+Change character composition dynamically while keeping a pure black silhouette vector look.
 
 Prompt example C:
 Transform this plain Korean text into a decorative Korean webnovel title typography artwork.
 
 ELEMENTS TO ADD:
-- Elegant royal crown on top center.
-- Climbing rose vines wrapping around the first and last letters.
-- A delicate butterfly landing on the top right.
-- Flowing decorative ribbon intertwined with the bottom text.
-- Small diamond sparkles around the flourishes.
+- royal crown
+- rose vines
+- butterfly
+- decorative ribbon
+- diamond sparkles
 
 STYLE:
-- Elegant and ornate serif style. The lettering features graceful swooshes and flourishes.
-- Flowing and harmonious composition with curved and sweeping lines.
-- Crisp, sharp serifs and refined edges.
-- Classic romantic vintage aesthetic with balanced symmetry.
-- Solid black glyphs on a clean white background.
+- ornate serif
+- graceful flourishes
+- balanced symmetry
+- refined edges
+- pure black silhouette vector
+- plain white background
 
-Change character composition dynamically. White glow around text.
+Change character composition dynamically while keeping a pure black silhouette vector look.
 
 Prompt example D:
 Transform this plain Korean text into a decorative Korean webnovel title typography artwork. Keep original text visible.
 
 ELEMENTS TO ADD:
 - tentacles
-- big eldritch magic book
-- stylized eyes around text
-- chains strongly coiling text
+- eldritch book
+- stylized eyes
+- coiling chains
 
 STYLE:
-- Dark fantasy occult style. The lettering is sharp with mystical and slightly jagged accents.
-- Chaotic yet structured interlaced text character composition.
-- Clean, sharp edges with flat geometric shapes.
-- Solid black glyphs on a clean white background.
+- occult fantasy
+- sharp accents
+- structured chaos
+- clean edges
+- pure black silhouette vector
+- plain white background
 
-Change character composition dynamically. White glow around text.
+Change character composition dynamically while keeping a pure black silhouette vector look.
 """
 
 
@@ -136,6 +142,7 @@ class TypographyPromptRequest:
     required_elements: Sequence[str] = ()
     keep_original_text_visible: bool = True
     extra_instructions: str = ""
+    genre_profile: str = ""
 
 
 class TypographyPromptGenerator:
@@ -180,18 +187,24 @@ class TypographyPromptGenerator:
             f"- End with: {_ENDING_LINE}\n"
             "- Output only the final prompt.\n"
             "- The prompt must be in English.\n"
-            "- Do not mention glow, shadow, lighting effects, colors, gradients, or colored backgrounds anywhere except in the exact final sentence.\n"
-            "- Use the title meaning to infer fitting mood, symbolism, and composition cues.\n"
-            "- The required elements must appear explicitly in the prompt.\n"
-            "- The style should reflect the provided keywords.\n"
-            "- If keywords or required elements are empty, infer suitable ones from the title.\n"
-            "- Keep the result concise but visually specific.\n\n"
+            "- Each bullet must be a short token or short phrase, usually 1 to 4 words.\n"
+            "- Avoid descriptive sentence bullets.\n"
+            "- Do not include parentheses, source words, translations, quotes, or labels inside bullets.\n"
+            "- Do not echo Korean input words or raw user input in any output bullet.\n"
+            f"- {_BLACK_VECTOR_RULE}\n"
+            "- Do not mention glow, shadow, lighting effects, colors, gradients, textures, material effects, or colored backgrounds.\n"
+            "- Use the internal genre direction only as bias; do not output it as a genre label.\n"
+            "- The style should reflect the provided intent without copying it verbatim.\n"
+            "- If user intent is empty, infer restrained generic webnovel typography cues.\n"
+            "- Keep the result concise and production-ready.\n\n"
             "Title:\n"
             f"- {title_line}\n\n"
-            "Style keywords:\n"
+            "User intent tokens:\n"
             f"{keyword_lines}\n\n"
             "Required elements:\n"
             f"{element_lines}\n\n"
+            "Internal genre direction:\n"
+            f"{request.genre_profile.strip() or '(none)'}\n\n"
             "Additional instructions:\n"
             f"{extra}\n\n"
             f"{_FEW_SHOT_EXAMPLES}"
@@ -259,8 +272,8 @@ def normalize_prompt(
     if keep_original_text_visible:
         opening_line += " Keep original text visible."
 
-    element_lines = _extract_section_bullets(prompt, "ELEMENTS TO ADD:")
-    style_lines = _extract_section_bullets(prompt, "STYLE:")
+    element_lines = _clean_prompt_bullets(_extract_section_bullets(prompt, "ELEMENTS TO ADD:"))
+    style_lines = _clean_prompt_bullets(_extract_section_bullets(prompt, "STYLE:"))
     has_explicit_ending_line = _ENDING_LINE in prompt
     style_lines = [
         line for line in style_lines if line.strip().lower() != f"- {_ENDING_LINE}".lower()
@@ -269,11 +282,18 @@ def normalize_prompt(
     if not style_lines:
         style_lines = [
             "- Strong Korean webnovel title typography composition.",
-            "- Solid black glyphs on a clean white background.",
+            "- Pure black silhouette vector typography with solid black shapes on a plain white background.",
         ]
 
-    if not any("solid black glyphs on a clean white background" in line.lower() for line in style_lines):
-        style_lines.append("- Solid black glyphs on a clean white background.")
+    style_lines = _remove_forbidden_rendering_terms(style_lines)
+    if not any("pure black silhouette vector" in line.lower() for line in style_lines):
+        style_lines.append(
+            "- Pure black silhouette vector typography with solid black shapes on a plain white background."
+        )
+    if not any("no color" in line.lower() for line in style_lines):
+        style_lines.append(
+            "- No color, texture, lighting, shadow, glow, gradient, or material effect."
+        )
 
     parts = [
         opening_line,
@@ -287,6 +307,53 @@ def normalize_prompt(
     if has_explicit_ending_line:
         parts.extend(["", _ENDING_LINE])
     return "\n".join(parts).strip()
+
+
+def _remove_forbidden_rendering_terms(lines: Sequence[str]) -> List[str]:
+    forbidden = (
+        "glow",
+        "shadow",
+        "lighting",
+        "light",
+        "color",
+        "gradient",
+        "texture",
+        "metallic",
+        "material",
+        "gold",
+        "silver",
+        "red",
+        "blue",
+        "green",
+        "purple",
+    )
+    cleaned = []
+    for line in lines:
+        lower_line = line.lower()
+        if any(term in lower_line for term in forbidden):
+            continue
+        cleaned.append(line)
+    return cleaned
+
+
+def _clean_prompt_bullets(lines: Sequence[str]) -> List[str]:
+    cleaned: List[str] = []
+    for line in lines:
+        item = line[2:].strip() if line.strip().startswith("- ") else line.strip()
+        item = re.sub(r"\([^)]*\)", "", item)
+        item = re.sub(r"\[[^\]]*\]", "", item)
+        item = re.sub(r"[\"'`]", "", item)
+        item = re.sub(r"\s+", " ", item).strip(" .,:;-/")
+        if not item:
+            continue
+        if re.search(r"[\u3131-\u318E\uAC00-\uD7A3]", item):
+            continue
+        if len(item) > 48:
+            continue
+        if len(item.split()) > 6:
+            continue
+        cleaned.append(f"- {item}")
+    return list(dict.fromkeys(cleaned))[:8]
 
 
 def _extract_section_bullets(prompt: str, header: str) -> List[str]:
