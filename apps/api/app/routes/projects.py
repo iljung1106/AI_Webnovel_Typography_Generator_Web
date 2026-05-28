@@ -13,6 +13,7 @@ from ..schemas import (
     UserContext,
     VersionCreate,
     VersionPatch,
+    WorkListItem,
 )
 from ..security import get_current_user
 from ..supabase_client import SupabaseConfigError, SupabaseRequestError, supabase
@@ -42,6 +43,48 @@ async def create_project(
     if not rows:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Project was not created.")
     return ProjectResponse(**rows[0])
+
+
+@router.get("", response_model=list[WorkListItem])
+async def list_projects(
+    user: UserContext = Depends(get_current_user),
+) -> list[WorkListItem]:
+    try:
+        project_rows = supabase.select(
+            "projects",
+            {
+                "select": "id,title,status,selected_genre_id,updated_at",
+                "user_id": f"eq.{user.user_id}",
+                "status": "neq.deleted",
+                "order": "updated_at.desc",
+                "limit": "40",
+            },
+        )
+        items: list[WorkListItem] = []
+        for project in project_rows:
+            version = _latest_version(project["id"])
+            active_job = _active_generation_job(project["id"], version["id"] if version else None, user.user_id)
+            thumbnail_asset_id = None
+            if version:
+                thumbnail_asset_id = version.get("selected_candidate_id") or version.get("cover_asset_id")
+            title = project.get("title") or (version.get("title_text") if version else "") or "타이포 작업"
+            items.append(
+                WorkListItem(
+                    project_id=project["id"],
+                    version_id=version["id"] if version else None,
+                    title=title,
+                    genre=None,
+                    status="generating" if active_job else project.get("status", "draft"),
+                    thumbnail_asset_id=thumbnail_asset_id,
+                    thumbnail_expired=False,
+                    active_job_id=active_job["id"] if active_job else None,
+                    updated_at=project.get("updated_at"),
+                    completed_at=None,
+                )
+            )
+    except (SupabaseConfigError, SupabaseRequestError) as exc:
+        raise supabase_http_error(exc) from exc
+    return items
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -146,3 +189,49 @@ async def patch_project_version(
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project version not found.")
     return ProjectVersionResponse(**rows[0])
+
+
+@router.get("/{project_id}/versions/{version_id}", response_model=ProjectVersionResponse)
+async def get_project_version_route(
+    project_id: UUID,
+    version_id: UUID,
+    user: UserContext = Depends(get_current_user),
+) -> ProjectVersionResponse:
+    try:
+        get_owned_project(project_id, user.user_id)
+        version = get_project_version(project_id, version_id)
+    except (SupabaseConfigError, SupabaseRequestError) as exc:
+        raise supabase_http_error(exc) from exc
+    return ProjectVersionResponse(**version)
+
+
+def _latest_version(project_id: str) -> dict | None:
+    rows = supabase.select(
+        "project_versions",
+        {
+            "select": VERSION_COLUMNS,
+            "project_id": f"eq.{project_id}",
+            "order": "version_number.desc",
+            "limit": "1",
+        },
+    )
+    return rows[0] if rows else None
+
+
+def _active_generation_job(project_id: str, version_id: str | None, user_id: UUID) -> dict | None:
+    if not version_id:
+        return None
+    rows = supabase.select(
+        "jobs",
+        {
+            "select": "id,status",
+            "user_id": f"eq.{user_id}",
+            "project_id": f"eq.{project_id}",
+            "version_id": f"eq.{version_id}",
+            "type": "eq.typography_generation",
+            "status": "in.(queued,running)",
+            "order": "created_at.desc",
+            "limit": "1",
+        },
+    )
+    return rows[0] if rows else None

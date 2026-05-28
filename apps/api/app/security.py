@@ -28,7 +28,7 @@ async def get_current_user(
             )
         try:
             auth_user = supabase.get_auth_user(token)
-            return UserContext(user_id=UUID(auth_user["id"]))
+            return UserContext(user_id=UUID(auth_user["id"]), email=auth_user.get("email"))
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

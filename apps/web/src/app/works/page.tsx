@@ -5,6 +5,7 @@ import type { Route } from "next";
 import { ArrowLeft, Clock3, PenLine, Sparkles } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
+import { listProjects } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase";
 
 type CompletedWork = {
@@ -85,8 +86,35 @@ export default function WorksPage() {
     if (!isAuthChecked) {
       return;
     }
-    setWorks(readOwnedWorks(session?.user.id ?? null));
-  }, [isAuthChecked, session?.user.id]);
+    if (!session) {
+      setWorks([]);
+      return;
+    }
+    let isCancelled = false;
+    listProjects(session)
+      .then((items) => {
+        if (!isCancelled) {
+          setWorks(
+            items.map((item) => ({
+              id: `project:${item.project_id}`,
+              title: item.title,
+              genre: item.genre || "타이포",
+              status: item.active_job_id ? "generating" : item.status === "completed" ? "completed" : "draft",
+              href: item.version_id ? (`/create?projectId=${item.project_id}&versionId=${item.version_id}` as Route) : ("/create" as Route),
+              updatedAt: item.updated_at ?? new Date(0).toISOString()
+            }))
+          );
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setWorks(readOwnedWorks(session.user.id));
+        }
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [isAuthChecked, session]);
 
   return (
     <main className="utility-page">

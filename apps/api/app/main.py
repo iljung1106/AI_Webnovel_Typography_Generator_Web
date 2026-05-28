@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import assets, health, jobs, projects
+from .routes import assets, health, jobs, me, projects
 from .settings import settings
 
 app = FastAPI(
@@ -19,6 +19,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(me.router, prefix="/me", tags=["me"])
 app.include_router(projects.router, prefix="/projects", tags=["projects"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(assets.router, prefix="/assets", tags=["assets"])

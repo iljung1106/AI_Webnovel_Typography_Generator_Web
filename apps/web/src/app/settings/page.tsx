@@ -4,11 +4,14 @@ import Link from "next/link";
 import { ArrowLeft, CreditCard, Gift, LogOut, ShieldCheck, UserRound } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
+import { getCreditSummary, getMe, type CreditSummaryResponse, type MeResponse } from "@/lib/api-client";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 export default function SettingsPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthChecked, setIsAuthChecked] = useState(!supabase);
+  const [profile, setProfile] = useState<MeResponse | null>(null);
+  const [credits, setCredits] = useState<CreditSummaryResponse | null>(null);
 
   useEffect(() => {
     if (!supabase) {
@@ -35,6 +38,26 @@ export default function SettingsPage() {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setProfile(null);
+      setCredits(null);
+      return;
+    }
+    let isCancelled = false;
+    Promise.all([getMe(session), getCreditSummary(session)])
+      .then(([nextProfile, nextCredits]) => {
+        if (!isCancelled) {
+          setProfile(nextProfile);
+          setCredits(nextCredits);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      isCancelled = true;
+    };
+  }, [session]);
 
   async function signOut() {
     await supabase?.auth.signOut();
@@ -63,7 +86,7 @@ export default function SettingsPage() {
             <dl className="info-list">
               <div>
                 <dt>이메일</dt>
-                <dd>{isAuthChecked ? session?.user.email ?? "로그인 필요" : "확인 중"}</dd>
+                <dd>{isAuthChecked ? profile?.email || session?.user.email || "로그인 필요" : "확인 중"}</dd>
               </div>
               <div>
                 <dt>로그인</dt>
@@ -84,7 +107,7 @@ export default function SettingsPage() {
             <dl className="info-list">
               <div>
                 <dt>오늘 남은 횟수</dt>
-                <dd>3회</dd>
+                <dd>{credits ? `${credits.free_generation_remaining}회` : "3회"}</dd>
               </div>
               <div>
                 <dt>제공 주기</dt>
@@ -101,7 +124,7 @@ export default function SettingsPage() {
             <dl className="info-list">
               <div>
                 <dt>잔액</dt>
-                <dd>0</dd>
+                <dd>{credits ? credits.paid_credit_balance : 0}</dd>
               </div>
               <div>
                 <dt>사용처</dt>

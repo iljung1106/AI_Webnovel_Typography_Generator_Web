@@ -29,8 +29,13 @@ import {
   createJob,
   createProject,
   createProjectVersion,
+  getActiveJob,
   getAssetSignedUrl,
+  getCreditSummary,
   getJob,
+  getProject,
+  getProjectVersion,
+  type CreditSummaryResponse,
   type JobResponse
 } from "@/lib/api-client";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
@@ -324,12 +329,14 @@ export function WorkflowShell() {
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthChecked, setIsAuthChecked] = useState(!supabase);
   const [pendingWorkId, setPendingWorkId] = useState<string | null>(null);
+  const [pendingRemoteWork, setPendingRemoteWork] = useState<{ projectId: string; versionId: string } | null>(null);
   const [shouldLoadSavedDraft, setShouldLoadSavedDraft] = useState(false);
   const [authState, setAuthState] = useState(isSupabaseConfigured ? "로그인 확인 중" : "로그인 준비 중");
   const [remoteState, setRemoteState] = useState("AI 작업을 시작할 수 있어요.");
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
   const [assetUrls, setAssetUrls] = useState<Record<string, AssetUrlEntry>>({});
+  const [creditSummary, setCreditSummary] = useState<CreditSummaryResponse | null>(null);
   const autoLayoutRequestKeyRef = useRef<string | null>(null);
   const resumedGenerationJobIdRef = useRef<string | null>(null);
 
@@ -338,9 +345,15 @@ export function WorkflowShell() {
     try {
       const params = new URLSearchParams(window.location.search);
       const workId = params.get("workId");
+      const projectId = params.get("projectId");
+      const versionId = params.get("versionId");
       const shouldStartNew = params.get("new") === "1";
 
-      if (workId) {
+      if (projectId && versionId) {
+        setPendingRemoteWork({ projectId, versionId });
+        shouldMarkHydrated = false;
+        return;
+      } else if (workId) {
         setPendingWorkId(workId);
         shouldMarkHydrated = false;
         return;
@@ -376,6 +389,54 @@ export function WorkflowShell() {
     }
     setIsHydrated(true);
   }, [isAuthChecked, pendingWorkId, session]);
+
+  useEffect(() => {
+    if (!pendingRemoteWork || !isAuthChecked) {
+      return;
+    }
+    if (!session) {
+      setDraft({ ...defaultDraft });
+      setSaveState("로그인 후 작업을 열 수 있어요");
+      setIsHydrated(true);
+      return;
+    }
+    let isCancelled = false;
+    Promise.all([
+      getProject(session, pendingRemoteWork.projectId),
+      getProjectVersion(session, pendingRemoteWork.projectId, pendingRemoteWork.versionId)
+    ])
+      .then(([project, version]) => {
+        if (isCancelled) {
+          return;
+        }
+        const layout = readLayoutResult(version.layout_json ?? {});
+        const styleResolution = readStyleResolution(version.style_resolved_json ?? {});
+        setDraft({
+          ...defaultDraft,
+          ownerUserId: session.user.id,
+          activeStepId: version.selected_candidate_id ? "effects" : layout?.items.length ? "layout" : "title",
+          title: version.title_text || project.title,
+          projectId: String(project.id),
+          versionId: String(version.id),
+          layoutItems: layout?.items ?? [],
+          layoutCanvas: layout?.canvas ?? null,
+          styleResolution,
+          selectedCandidateId: version.selected_candidate_id ? String(version.selected_candidate_id) : "",
+          updatedAt: new Date().toISOString()
+        });
+        setIsHydrated(true);
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setDraft({ ...defaultDraft });
+          setSaveState("작업을 불러오지 못했어요");
+          setIsHydrated(true);
+        }
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [isAuthChecked, pendingRemoteWork, session]);
 
   useEffect(() => {
     if (!shouldLoadSavedDraft || !isAuthChecked) {
@@ -449,6 +510,7 @@ export function WorkflowShell() {
 
   useEffect(() => {
     if (!session) {
+      setCreditSummary(null);
       return;
     }
 
@@ -504,6 +566,23 @@ export function WorkflowShell() {
   }, [assetUrls, draft.generationSlots, session]);
 
   useEffect(() => {
+    if (!session) {
+      return;
+    }
+    let isCancelled = false;
+    getCreditSummary(session)
+      .then((summary) => {
+        if (!isCancelled) {
+          setCreditSummary(summary);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      isCancelled = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
     if (draft.activeStepId !== "layout" || !isHydrated || !session || isRemoteBusy) {
       return;
     }
@@ -539,6 +618,26 @@ export function WorkflowShell() {
       isCancelled = true;
     };
   }, [draft.generationJobId, draft.generationSlots, session]);
+
+  useEffect(() => {
+    if (!session || !draft.projectId || !draft.versionId || draft.generationJobId) {
+      return;
+    }
+    let isCancelled = false;
+    getActiveJob(session, {
+      projectId: draft.projectId,
+      versionId: draft.versionId
+    })
+      .then((job) => {
+        if (!isCancelled) {
+          applyGenerationJob(job);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      isCancelled = true;
+    };
+  }, [draft.generationJobId, draft.projectId, draft.versionId, session]);
 
   useEffect(() => {
     if (
@@ -588,8 +687,8 @@ export function WorkflowShell() {
 
   const activeStepIndex = workflowSteps.findIndex((step) => step.id === draft.activeStepId);
   const selectedGenre = genres.find((genre) => genre.id === draft.selectedGenreId) ?? genres[0];
-  const freeGenerationCredits = 3;
-  const paidCredits = 0;
+  const freeGenerationCredits = creditSummary?.free_generation_remaining ?? 3;
+  const paidCredits = creditSummary?.paid_credit_balance ?? 0;
 
   const canGoBack = activeStepIndex > 0;
   const canGoNext = activeStepIndex < workflowSteps.length - 1 && canAdvanceFromStep(draft);
@@ -819,6 +918,7 @@ export function WorkflowShell() {
         type: "typography_generation",
         inputJson: {
           title: titleText,
+          credit_source: "free",
           prompt: buildGenerationPrompt(draft.styleResolution, draft.stylePrompt, selectedGenre),
           layout_json: layoutJson,
           items: draft.layoutItems,

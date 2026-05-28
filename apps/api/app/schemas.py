@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 class UserContext(BaseModel):
     user_id: UUID
+    email: str | None = None
 
 
 class ProjectCreate(BaseModel):
@@ -23,6 +24,19 @@ class ProjectResponse(BaseModel):
     selected_genre_id: UUID | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class WorkListItem(BaseModel):
+    project_id: UUID
+    version_id: UUID | None = None
+    title: str
+    genre: str | None = None
+    status: str
+    thumbnail_asset_id: UUID | None = None
+    thumbnail_expired: bool = False
+    active_job_id: UUID | None = None
+    updated_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class VersionCreate(BaseModel):
@@ -82,6 +96,53 @@ class JobResponse(BaseModel):
     result_json: dict[str, Any] = Field(default_factory=dict)
     error_code: str | None = None
     error_message: str | None = None
+
+
+class MeResponse(BaseModel):
+    id: UUID
+    email: str
+    display_name: str | None = None
+
+
+class CreditSummaryResponse(BaseModel):
+    free_generation_remaining: int
+    free_generation_limit: int
+    free_generation_used_today: int
+    paid_credit_balance: float
+    usage_date: str
+
+
+class CreditLedgerItem(BaseModel):
+    id: UUID
+    credit_type: str
+    type: str
+    amount: float
+    balance_after: float
+    reason: str | None = None
+    memo: str | None = None
+    created_at: datetime | None = None
+
+
+class StoragePolicyResponse(BaseModel):
+    cover_retention_hours: int = 24
+    completed_asset_retention_days: int = 30
+    failed_temp_retention_days: int = 7
+    signed_url_expiration_seconds: int = 3600
+
+
+class LicenseSummaryResponse(BaseModel):
+    free_license: str
+    paid_license: str
+
+
+class DeleteRequestCreate(BaseModel):
+    request_message: str | None = Field(default=None, max_length=500)
+
+
+class DeleteRequestResponse(BaseModel):
+    id: UUID
+    status: str
+    created_at: datetime | None = None
 
 
 class SignedUrlResponse(BaseModel):

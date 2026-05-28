@@ -13,6 +13,19 @@ export type ProjectResponse = {
   selected_genre_id: string | null;
 };
 
+export type WorkListItemResponse = {
+  project_id: string;
+  version_id: string | null;
+  title: string;
+  genre: string | null;
+  status: string;
+  thumbnail_asset_id: string | null;
+  thumbnail_expired: boolean;
+  active_job_id: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+};
+
 export type ProjectVersionResponse = {
   id: string;
   project_id: string;
@@ -25,6 +38,7 @@ export type ProjectVersionResponse = {
     };
   };
   style_resolved_json?: Record<string, unknown>;
+  selected_candidate_id?: string | null;
 };
 
 export type JobResponse = {
@@ -42,6 +56,31 @@ export type SignedUrlResponse = {
   asset_id: string;
   url: string;
   expires_in: number;
+};
+
+export type MeResponse = {
+  id: string;
+  email: string;
+  display_name: string | null;
+};
+
+export type CreditSummaryResponse = {
+  free_generation_remaining: number;
+  free_generation_limit: number;
+  free_generation_used_today: number;
+  paid_credit_balance: number;
+  usage_date: string;
+};
+
+export type CreditLedgerItemResponse = {
+  id: string;
+  credit_type: string;
+  type: string;
+  amount: number;
+  balance_after: number;
+  reason: string | null;
+  memo: string | null;
+  created_at: string | null;
 };
 
 async function requestJson<T>(
@@ -93,6 +132,14 @@ export async function createProject(
   });
 }
 
+export async function listProjects(session: Session) {
+  return requestJson<WorkListItemResponse[]>("/projects", { session });
+}
+
+export async function getProject(session: Session, projectId: string) {
+  return requestJson<ProjectResponse>(`/projects/${projectId}`, { session });
+}
+
 export async function createProjectVersion(
   session: Session,
   input: {
@@ -111,6 +158,10 @@ export async function createProjectVersion(
       cover_asset_id: input.coverAssetId ?? null
     }
   });
+}
+
+export async function getProjectVersion(session: Session, projectId: string, versionId: string) {
+  return requestJson<ProjectVersionResponse>(`/projects/${projectId}/versions/${versionId}`, { session });
 }
 
 export async function createJob(
@@ -136,6 +187,34 @@ export async function createJob(
 
 export async function getJob(session: Session, jobId: string) {
   return requestJson<JobResponse>(`/jobs/${jobId}`, { session });
+}
+
+export async function getActiveJob(
+  session: Session,
+  input: {
+    projectId: string;
+    versionId: string;
+    type?: "typography_generation";
+  }
+) {
+  const params = new URLSearchParams({
+    project_id: input.projectId,
+    version_id: input.versionId,
+    type: input.type ?? "typography_generation"
+  });
+  return requestJson<JobResponse>(`/jobs/active?${params.toString()}`, { session });
+}
+
+export async function getMe(session: Session) {
+  return requestJson<MeResponse>("/me", { session });
+}
+
+export async function getCreditSummary(session: Session) {
+  return requestJson<CreditSummaryResponse>("/me/credits", { session });
+}
+
+export async function listCreditLedger(session: Session, limit = 20) {
+  return requestJson<CreditLedgerItemResponse[]>(`/me/credit-ledger?limit=${limit}`, { session });
 }
 
 export async function getAssetSignedUrl(session: Session, assetId: string) {
