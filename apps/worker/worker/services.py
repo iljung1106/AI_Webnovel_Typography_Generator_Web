@@ -229,14 +229,21 @@ class TypographyGenerationService:
                 )
                 continue
 
+            preview_path = image_path
+            if str(job.input_json.get("credit_source") or "free") == "free":
+                preview_path = prototype_adapters.create_watermarked_preview(
+                    image_path,
+                    image_path.with_name(f"{image_path.stem}_watermarked.png"),
+                )
+
             storage_path = self._candidate_storage_path(
                 job=job,
                 batch_id=batch_id,
                 slot_index=index,
-                image_path=image_path,
+                image_path=preview_path,
             )
             asset = self.context.db.create_asset_for_file(
-                file_path=image_path,
+                file_path=preview_path,
                 user_id=job.user_id,
                 project_id=job.project_id,
                 version_id=job.version_id,

@@ -142,6 +142,50 @@ def create_transparent_bw_mask(
     return output_path
 
 
+def create_watermarked_preview(
+    input_path: Path,
+    output_path: Path,
+    *,
+    watermark_text: str = "fontasy.ai.kr",
+) -> Path:
+    """Bake a small attribution mark into a preview image."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.open(input_path).convert("RGBA")
+    width, height = image.size
+    draw = ImageDraw.Draw(image)
+    font_size = max(18, int(max(width, height) * 0.018))
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+    except OSError:
+        font = ImageFont.load_default()
+    bbox = draw.textbbox((0, 0), watermark_text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    padding = max(18, int(max(width, height) * 0.018))
+    box_width = text_width + int(padding * 1.2)
+    box_height = text_height + int(padding * 0.9)
+    x = width - box_width - padding
+    y = height - box_height - padding
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    overlay_draw.rounded_rectangle(
+        (x, y, x + box_width, y + box_height),
+        radius=max(8, padding // 3),
+        fill=(255, 255, 255, 92),
+    )
+    overlay_draw.text(
+        (x + int(padding * 0.6), y + int(padding * 0.35)),
+        watermark_text,
+        font=font,
+        fill=(15, 23, 42, 92),
+    )
+    output = Image.alpha_composite(image, overlay)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output.convert("RGB").save(output_path, format="PNG")
+    return output_path
+
+
 def resolve_style_prompt(
     *,
     title: str,

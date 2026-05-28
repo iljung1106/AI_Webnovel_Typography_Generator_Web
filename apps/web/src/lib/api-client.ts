@@ -83,6 +83,16 @@ export type CreditLedgerItemResponse = {
   created_at: string | null;
 };
 
+export type ExportClaimResponse = {
+  id: string;
+  export_type: "final_png" | "transparent_png" | "layer_zip" | "watermark_removed_png";
+  credit_source: "free" | "paid";
+  paid_credit_spent: number;
+  license_type: string;
+  watermark_applied: boolean;
+  status: string;
+};
+
 async function requestJson<T>(
   path: string,
   options: ApiOptions & {
@@ -215,6 +225,29 @@ export async function getCreditSummary(session: Session) {
 
 export async function listCreditLedger(session: Session, limit = 20) {
   return requestJson<CreditLedgerItemResponse[]>(`/me/credit-ledger?limit=${limit}`, { session });
+}
+
+export async function claimExport(
+  session: Session,
+  input: {
+    projectId: string;
+    versionId: string;
+    exportType: "final_png" | "transparent_png" | "layer_zip" | "watermark_removed_png";
+    creditSource: "free" | "paid";
+    paidCreditCost?: number;
+  }
+) {
+  return requestJson<ExportClaimResponse>("/exports/claim", {
+    session,
+    method: "POST",
+    body: {
+      project_id: input.projectId,
+      version_id: input.versionId,
+      export_type: input.exportType,
+      credit_source: input.creditSource,
+      paid_credit_cost: input.paidCreditCost ?? 0
+    }
+  });
 }
 
 export async function getAssetSignedUrl(session: Session, assetId: string) {

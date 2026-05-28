@@ -145,6 +145,27 @@ class DeleteRequestResponse(BaseModel):
     created_at: datetime | None = None
 
 
+ExportType = Literal["final_png", "transparent_png", "layer_zip", "watermark_removed_png"]
+
+
+class ExportClaimCreate(BaseModel):
+    project_id: UUID
+    version_id: UUID
+    export_type: ExportType
+    credit_source: Literal["free", "paid"] = "free"
+    paid_credit_cost: float = Field(default=0, ge=0, le=100)
+
+
+class ExportClaimResponse(BaseModel):
+    id: UUID
+    export_type: ExportType
+    credit_source: str
+    paid_credit_spent: float
+    license_type: str
+    watermark_applied: bool
+    status: str
+
+
 class SignedUrlResponse(BaseModel):
     asset_id: UUID
     url: str

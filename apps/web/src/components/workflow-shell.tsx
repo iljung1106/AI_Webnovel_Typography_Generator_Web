@@ -36,6 +36,7 @@ import {
   getProject,
   getProjectVersion,
   type CreditSummaryResponse,
+  claimExport,
   type JobResponse
 } from "@/lib/api-client";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
@@ -50,6 +51,8 @@ const pollDelayMs = 1800;
 const maxPollAttempts = 90;
 const defaultCanvas: LayoutCanvas = { width: 2000, height: 1000 };
 const terminalJobStatuses = new Set(["succeeded", "partially_succeeded", "failed", "timed_out", "cancelled"]);
+const typographyGenerationPaidCost = 1;
+const layerZipPaidCost = 1;
 
 const genres = [
   {
@@ -132,6 +135,7 @@ type GuestDraft = {
   styleResolution: StyleResolution | null;
   generationJobId: string | null;
   generationJobStatus: string | null;
+  generationCreditSource: "free" | "paid" | null;
   generationSlots: GenerationSlot[];
   effectPresetId: string;
   effectParams: TypoEffectParams | null;
@@ -171,6 +175,7 @@ const defaultDraft: GuestDraft = {
   styleResolution: null,
   generationJobId: null,
   generationJobStatus: null,
+  generationCreditSource: null,
   generationSlots: [],
   effectPresetId: typoEffectPresets[0].id,
   effectParams: null,
@@ -570,15 +575,29 @@ export function WorkflowShell() {
       return;
     }
     let isCancelled = false;
-    getCreditSummary(session)
-      .then((summary) => {
-        if (!isCancelled) {
-          setCreditSummary(summary);
-        }
-      })
+    refreshCreditSummary(session, (summary) => {
+      if (!isCancelled) {
+        setCreditSummary(summary);
+      }
+    })
       .catch(() => undefined);
     return () => {
       isCancelled = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+    const refresh = () => {
+      void refreshCreditSummary(session, setCreditSummary);
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("fontasy:credits-updated", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("fontasy:credits-updated", refresh);
     };
   }, [session]);
 
@@ -687,7 +706,7 @@ export function WorkflowShell() {
 
   const activeStepIndex = workflowSteps.findIndex((step) => step.id === draft.activeStepId);
   const selectedGenre = genres.find((genre) => genre.id === draft.selectedGenreId) ?? genres[0];
-  const freeGenerationCredits = creditSummary?.free_generation_remaining ?? 3;
+  const freeGenerationCredits = creditSummary?.free_generation_remaining ?? null;
   const paidCredits = creditSummary?.paid_credit_balance ?? 0;
 
   const canGoBack = activeStepIndex > 0;
@@ -902,6 +921,11 @@ export function WorkflowShell() {
       goToStep("style");
       return;
     }
+    const creditSource = (creditSummary?.free_generation_remaining ?? 0) > 0 ? "free" : "paid";
+    if (creditSource === "paid" && paidCredits < typographyGenerationPaidCost) {
+      setRemoteError("오늘의 무료 생성 횟수를 모두 사용했어요. 유료 크레딧이 필요합니다.");
+      return;
+    }
 
     setIsRemoteBusy(true);
     setRemoteError(null);
@@ -911,14 +935,19 @@ export function WorkflowShell() {
         items: draft.layoutItems,
         canvas: draft.layoutCanvas ?? defaultCanvas
       };
-      setRemoteState("AI 시안 생성 작업을 요청하는 중");
+      setRemoteState(
+        creditSource === "free"
+          ? "무료 생성 1회를 사용해 시안 생성을 요청하는 중"
+          : `유료 크레딧 ${typographyGenerationPaidCost}개를 사용해 시안 생성을 요청하는 중`
+      );
       const job = await createJob(session, {
         projectId: remoteDraft.projectId,
         versionId: remoteDraft.versionId,
         type: "typography_generation",
         inputJson: {
           title: titleText,
-          credit_source: "free",
+          credit_source: creditSource,
+          credit_cost_total: creditSource === "paid" ? typographyGenerationPaidCost : 0,
           prompt: buildGenerationPrompt(draft.styleResolution, draft.stylePrompt, selectedGenre),
           layout_json: layoutJson,
           items: draft.layoutItems,
@@ -928,9 +957,11 @@ export function WorkflowShell() {
       updateDraft({
         generationJobId: job.id,
         generationJobStatus: job.status,
+        generationCreditSource: readGenerationCreditSource(job.result_json) ?? creditSource,
         generationSlots: readGenerationSlots(job.result_json),
         selectedCandidateId: ""
       });
+      await refreshCreditSummary(session, setCreditSummary);
       const finalJob = await pollJob(session, job.id, (nextJob) => {
         applyGenerationJob(nextJob);
         setRemoteState(jobStatusMessage("시안", nextJob.status));
@@ -941,6 +972,7 @@ export function WorkflowShell() {
     } catch (error) {
       setRemoteError(errorMessage(error));
       setRemoteState("AI 시안 생성 요청 실패");
+      void refreshCreditSummary(session, setCreditSummary);
     } finally {
       setIsRemoteBusy(false);
     }
@@ -979,6 +1011,7 @@ export function WorkflowShell() {
       ...currentDraft,
       generationJobId: job.id,
       generationJobStatus: job.status,
+      generationCreditSource: readGenerationCreditSource(job.result_json) ?? currentDraft.generationCreditSource,
       ...(generationSlots.length ? { generationSlots } : {}),
       selectedCandidateId:
         currentDraft.selectedCandidateId && candidateAssetIds.includes(currentDraft.selectedCandidateId)
@@ -1087,7 +1120,7 @@ export function WorkflowShell() {
           <div className="credit-line">
             <Gift size={15} />
             <span>무료 생성</span>
-            <strong>{freeGenerationCredits}</strong>
+            <strong>{freeGenerationCredits ?? "확인 중"}</strong>
           </div>
           <div className="credit-line">
             <CreditCard size={15} />
@@ -1190,6 +1223,7 @@ export function WorkflowShell() {
                     styleResolution: null,
                     generationJobId: null,
                     generationJobStatus: null,
+                    generationCreditSource: null,
                     generationSlots: [],
                     selectedCandidateId: "",
                     effectPlacement: null
@@ -1232,6 +1266,7 @@ export function WorkflowShell() {
                 assetUrls={assetUrls}
                 generationJobId={draft.generationJobId}
                 generationJobStatus={draft.generationJobStatus}
+                creditSummary={creditSummary}
                 generationSlots={draft.generationSlots}
                 isBusy={isRemoteBusy}
                 isSignedIn={Boolean(session)}
@@ -1267,8 +1302,18 @@ export function WorkflowShell() {
                 effectPresetId={draft.effectPresetId}
                 placement={draft.effectPlacement}
                 generationSlots={draft.generationSlots}
+                creditSource={draft.generationCreditSource ?? "free"}
+                paidCredits={paidCredits}
+                projectId={draft.projectId}
+                session={session}
                 selectedCandidateId={draft.selectedCandidateId}
                 title={draft.title}
+                versionId={draft.versionId}
+                onCreditsChanged={() => {
+                  if (session) {
+                    void refreshCreditSummary(session, setCreditSummary);
+                  }
+                }}
                 onComplete={saveCompletedWork}
               />
             ) : null}
@@ -1741,6 +1786,7 @@ function GenerationStep({
   actionError,
   actionState,
   assetUrls,
+  creditSummary,
   generationJobId,
   generationJobStatus,
   generationSlots,
@@ -1754,6 +1800,7 @@ function GenerationStep({
   actionError: string | null;
   actionState: string;
   assetUrls: Record<string, AssetUrlEntry>;
+  creditSummary: CreditSummaryResponse | null;
   generationJobId: string | null;
   generationJobStatus: string | null;
   generationSlots: GenerationSlot[];
@@ -1766,19 +1813,37 @@ function GenerationStep({
 }) {
   const slots = slotPlaceholders(generationSlots);
   const hasActiveGeneration = isActiveJobStatus(generationJobStatus) || slots.some((slot) => isActiveSlotStatus(slot.status));
+  const freeRemaining = creditSummary?.free_generation_remaining ?? 0;
+  const paidBalance = creditSummary?.paid_credit_balance ?? 0;
+  const willUseFree = freeRemaining > 0;
+  const hasEnoughPaidCredit = paidBalance >= typographyGenerationPaidCost;
+  const isCreditReady = Boolean(creditSummary);
+  const canSpend = willUseFree || hasEnoughPaidCredit;
+  const chargeLabel = willUseFree
+    ? `무료 생성 1회 사용 · 오늘 ${freeRemaining}회 남음`
+    : `유료 크레딧 ${typographyGenerationPaidCost}개 필요`;
+  const chargeDetail = willUseFree
+    ? "무료 결과물에는 작은 워터마크와 표시 조건이 적용됩니다."
+    : hasEnoughPaidCredit
+      ? "유료 생성 결과물은 워터마크 없이 사용할 수 있습니다."
+      : "무료 생성 횟수를 모두 사용했습니다. 유료 크레딧이 부족합니다.";
 
   return (
     <div className="generation-stage">
       <div className="generation-toolbar">
         <button
-          className="button ai-recommend"
-          disabled={!isSignedIn || isBusy || hasActiveGeneration}
+          className={`button ai-recommend${isBusy || hasActiveGeneration ? " spending" : ""}`}
+          disabled={!isSignedIn || isBusy || hasActiveGeneration || !isCreditReady || !canSpend}
           onClick={onRequestAi}
           type="button"
         >
           {isBusy || hasActiveGeneration ? <Loader2 className="spin" size={15} /> : <Wand2 size={15} />}
           {hasActiveGeneration ? "시안 생성 중" : "3개 시안 생성"}
         </button>
+        <div className={`charge-card${willUseFree ? " free" : " paid"}${!canSpend && isCreditReady ? " blocked" : ""}`}>
+          <strong>{isCreditReady ? chargeLabel : "크레딧 확인 중"}</strong>
+          <span>{isCreditReady ? chargeDetail : "계정의 생성 가능 횟수를 불러오고 있습니다."}</span>
+        </div>
         <div className="generation-status">
           <p className="control-note">{isSignedIn ? actionState : "로그인 후 AI 시안 생성을 사용할 수 있어요."}</p>
           {generationJobId || generationJobStatus ? (
@@ -1844,23 +1909,11 @@ function GenerationSlotCard({
             src={assetUrl}
           />
         ) : isWaiting ? (
-          <span className="candidate-idle-visual" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
+          <StatePreviewImage alt="시안 생성 전" className="candidate-idle-visual" src="/visuals/candidate-idle.png" />
         ) : isActive ? (
-          <span className="candidate-loading-visual" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
+          <StatePreviewImage alt="시안 생성 중" className="candidate-loading-visual" src="/visuals/candidate-loading.png" />
         ) : (
-          <span className="candidate-failed-visual" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
+          <StatePreviewImage alt="시안 생성 실패" className="candidate-failed-visual" src="/visuals/candidate-failed.png" />
         )}
       </div>
       {isActive ? <Loader2 className="slot-loader spin" size={18} /> : null}
@@ -1874,27 +1927,43 @@ function GenerationSlotCard({
   );
 }
 
+function StatePreviewImage({ alt, className, src }: { alt: string; className: string; src: string }) {
+  return <img alt={alt} className={`candidate-state-image ${className}`} src={src} />;
+}
+
 function ExportStep({
   assetUrls,
   cover,
+  creditSource,
   effectParams,
   layerParams,
   effectPresetId,
   placement,
   generationSlots,
+  paidCredits,
+  projectId,
+  session,
   selectedCandidateId,
   title,
+  versionId,
+  onCreditsChanged,
   onComplete
 }: {
   assetUrls: Record<string, AssetUrlEntry>;
   cover: CoverDraft | null;
+  creditSource: "free" | "paid";
   effectParams: TypoEffectParams | null;
   layerParams: TypoLayerParams | null;
   effectPresetId: string;
   placement: TypoEffectPlacement | null;
   generationSlots: GenerationSlot[];
+  paidCredits: number;
+  projectId: string | null;
+  session: Session | null;
   selectedCandidateId: string;
   title: string;
+  versionId: string | null;
+  onCreditsChanged: () => void;
   onComplete: () => void;
 }) {
   const selectedSlot = generationSlots.find((slot) => slot.candidateAssetId === selectedCandidateId);
@@ -1902,6 +1971,54 @@ function ExportStep({
   const selectedUrl = transparentAssetId ? assetUrls[transparentAssetId]?.url : null;
   const preset = getTypoEffectPreset(effectPresetId);
   const previewTitle = title.trim() || "타이포 시안";
+  const [exportState, setExportState] = useState("");
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [isClaimingExport, setIsClaimingExport] = useState(false);
+  const freeExport = creditSource !== "paid";
+  const canClaimPaidExport = Boolean(session && projectId && versionId && paidCredits >= layerZipPaidCost);
+
+  async function claimLayerZipExport() {
+    if (!selectedUrl) {
+      return;
+    }
+    if (!session || !projectId || !versionId) {
+      setExportError("로그인 후 레이어 ZIP을 받을 수 있어요.");
+      return;
+    }
+    if (paidCredits < layerZipPaidCost) {
+      setExportError(`레이어 ZIP에는 유료 크레딧 ${layerZipPaidCost}개가 필요합니다.`);
+      return;
+    }
+    setIsClaimingExport(true);
+    setExportError(null);
+    setExportState(`유료 크레딧 ${layerZipPaidCost}개 사용 중`);
+    try {
+      await claimExport(session, {
+        projectId,
+        versionId,
+        exportType: "layer_zip",
+        creditSource: "paid",
+        paidCreditCost: layerZipPaidCost
+      });
+      onCreditsChanged();
+      await exportTypoLayerZip({
+        backgroundUrl: cover?.previewDataUrl ?? null,
+        effectParams,
+        imageUrl: selectedUrl,
+        layerParams,
+        placement,
+        presetId: effectPresetId,
+        filename: `${safeFilename(previewTitle)}-layers.zip`
+      });
+      setExportState("레이어 ZIP을 준비했습니다.");
+    } catch (error) {
+      setExportError(errorMessage(error));
+      setExportState("");
+      onCreditsChanged();
+    } finally {
+      setIsClaimingExport(false);
+    }
+  }
 
   return (
     <div className="export-stage">
@@ -1924,6 +2041,14 @@ function ExportStep({
         <ControlRow label="효과" value={preset.label} />
         <ControlRow label="기본 파일" value="PNG" />
         <ControlRow label="상태" value={selectedSlot ? slotStatusText(selectedSlot.status) : "대기 중"} />
+        <div className={`license-callout${freeExport ? " free" : " paid"}`}>
+          <strong>{freeExport ? "무료 결과물" : "유료 결과물"}</strong>
+          <span>
+            {freeExport
+              ? "PNG에는 작은 워터마크가 포함됩니다. 작품 소개 영역에 fontasy.ai.kr 표시가 필요합니다."
+              : "표시 의무 없이 사용할 수 있습니다."}
+          </span>
+        </div>
         <button
           className="button primary"
           disabled={!selectedUrl}
@@ -1936,7 +2061,11 @@ function ExportStep({
                 layerParams,
                 placement,
                 presetId: effectPresetId,
-                filename: `${safeFilename(previewTitle)}.png`
+                filename: `${safeFilename(previewTitle)}.png`,
+                watermark: {
+                  enabled: freeExport,
+                  text: "fontasy.ai.kr"
+                }
               });
             }
           }}
@@ -1946,24 +2075,18 @@ function ExportStep({
         </button>
         <button
           className="button secondary"
-          disabled={!selectedUrl}
-          onClick={() => {
-            if (selectedUrl) {
-              exportTypoLayerZip({
-                backgroundUrl: cover?.previewDataUrl ?? null,
-                effectParams,
-                imageUrl: selectedUrl,
-                layerParams,
-                placement,
-                presetId: effectPresetId,
-                filename: `${safeFilename(previewTitle)}-layers.zip`
-              });
-            }
-          }}
+          disabled={!selectedUrl || !canClaimPaidExport || isClaimingExport}
+          onClick={claimLayerZipExport}
           type="button"
         >
-          레이어 ZIP
+          {isClaimingExport ? <Loader2 className="spin" size={15} /> : null}
+          레이어 ZIP · 유료 {layerZipPaidCost}
         </button>
+        {freeExport ? (
+          <p className="control-note">무료 생성본도 유료 크레딧을 사용하면 레이어 ZIP을 받을 수 있습니다.</p>
+        ) : null}
+        {exportState ? <p className="control-note">{exportState}</p> : null}
+        {exportError ? <p className="control-error">{exportError}</p> : null}
         <button className="button primary" disabled={!selectedUrl} onClick={onComplete} type="button">
           완료
         </button>
@@ -2530,6 +2653,16 @@ function readGenerationSlots(resultJson: Record<string, unknown>) {
       };
     })
     .filter((slot): slot is GenerationSlot => Boolean(slot));
+}
+
+function readGenerationCreditSource(resultJson: Record<string, unknown>) {
+  return resultJson.credit_source === "paid" || resultJson.creditSource === "paid" ? "paid" : resultJson.credit_source === "free" || resultJson.creditSource === "free" ? "free" : null;
+}
+
+async function refreshCreditSummary(session: Session, onSummary: (summary: CreditSummaryResponse) => void) {
+  const summary = await getCreditSummary(session);
+  onSummary(summary);
+  return summary;
 }
 
 function slotPlaceholders(slots: GenerationSlot[]) {

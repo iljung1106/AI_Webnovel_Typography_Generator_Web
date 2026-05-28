@@ -140,6 +140,13 @@ def _create_generation_batch(job: dict, payload: JobCreate, user_id: UUID) -> di
             detail="Generation batch was not created.",
         )
     batch = batch_rows[0]
+    if credit_source == "paid":
+        _spend_paid_credit(
+            user_id=user_id,
+            amount=float(payload.input_json.get("credit_cost_total") or 0),
+            project_id=payload.project_id,
+            batch_id=batch["id"],
+        )
     slot_payloads = [
         {
             "batch_id": batch["id"],
@@ -217,6 +224,12 @@ def _consume_free_generation_credit(user_id: UUID) -> None:
 def _ensure_paid_credit(user_id: UUID, required_amount: float) -> None:
     if required_amount <= 0:
         return
+    balance = _paid_credit_balance(user_id)
+    if balance < required_amount:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="유료 크레딧이 부족해요.")
+
+
+def _paid_credit_balance(user_id: UUID) -> float:
     rows = supabase.select(
         "credit_ledger",
         {
@@ -225,9 +238,29 @@ def _ensure_paid_credit(user_id: UUID, required_amount: float) -> None:
             "credit_type": "eq.paid_credit",
         },
     )
-    balance = sum(float(row.get("amount") or 0) for row in rows)
-    if balance < required_amount:
+    return sum(float(row.get("amount") or 0) for row in rows)
+
+
+def _spend_paid_credit(user_id: UUID, amount: float, project_id: UUID, batch_id: str) -> None:
+    if amount <= 0:
+        return
+    balance = _paid_credit_balance(user_id)
+    if balance < amount:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="유료 크레딧이 부족해요.")
+    supabase.insert(
+        "credit_ledger",
+        {
+            "user_id": str(user_id),
+            "credit_type": "paid_credit",
+            "type": "generation_charge",
+            "amount": -amount,
+            "balance_after": balance - amount,
+            "related_project_id": str(project_id),
+            "related_batch_id": str(batch_id),
+            "reason": "generation_charge",
+            "memo": "타이포 시안 생성",
+        },
+    )
 
 
 def _enforce_generation_rate_limit(user_id: UUID) -> None:
@@ -299,7 +332,7 @@ def _generation_result_json(job: dict, batch_id: str | None = None) -> dict:
     batch_rows = supabase.select(
         "generation_batches",
         {
-            "select": "id,status",
+            "select": "id,status,credit_source,paid_credit_spent",
             "job_id": f"eq.{job['id']}",
             "order": "created_at.desc",
             "limit": "1",
@@ -321,6 +354,8 @@ def _generation_result_json(job: dict, batch_id: str | None = None) -> dict:
     )
     return {
         "batch_id": batch["id"],
+        "credit_source": batch.get("credit_source") or "free",
+        "paid_credit_spent": batch.get("paid_credit_spent", 0),
         "slots": [
             {
                 "slot_index": row["slot_index"],

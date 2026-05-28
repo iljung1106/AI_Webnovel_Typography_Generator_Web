@@ -16,6 +16,7 @@ type RenderTypoEffectInput = {
 
 type DownloadTypoEffectInput = Omit<RenderTypoEffectInput, "targetCanvas"> & {
   filename: string;
+  watermark?: WatermarkOptions | null;
 };
 
 type LayerState = Omit<ReturnType<typeof createDefaultLayerState>, "backgroundImage"> & {
@@ -40,6 +41,11 @@ export type TypoEffectRenderResult = {
   materialWidth: number;
   materialHeight: number;
   placement: TypoEffectPlacement;
+};
+
+export type WatermarkOptions = {
+  enabled: boolean;
+  text?: string;
 };
 
 const maxRenderDimension = 2048;
@@ -149,7 +155,33 @@ export async function exportTypoLayerZip(input: DownloadTypoEffectInput) {
 export async function downloadTypoEffectPng(input: DownloadTypoEffectInput) {
   const canvas = document.createElement("canvas");
   await renderTypoEffectToCanvas({ ...input, targetCanvas: canvas });
+  if (input.watermark?.enabled) {
+    drawWatermark(canvas, input.watermark.text ?? "fontasy.ai.kr");
+  }
   downloadCanvas(canvas, input.filename);
+}
+
+function drawWatermark(canvas: HTMLCanvasElement, text: string) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  const longEdge = Math.max(canvas.width, canvas.height);
+  const fontSize = Math.max(18, Math.round(longEdge * 0.018));
+  const padding = Math.max(18, Math.round(longEdge * 0.018));
+  ctx.save();
+  ctx.font = `700 ${fontSize}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.textBaseline = "alphabetic";
+  const metrics = ctx.measureText(text);
+  const boxWidth = metrics.width + padding * 1.1;
+  const boxHeight = fontSize + padding * 0.5;
+  const x = canvas.width - boxWidth - padding;
+  const y = canvas.height - boxHeight - padding;
+  ctx.fillStyle = "rgba(255, 255, 255, 0.48)";
+  ctx.fillRect(x, y, boxWidth, boxHeight);
+  ctx.fillStyle = "rgba(15, 23, 42, 0.34)";
+  ctx.fillText(text, x + padding * 0.55, y + boxHeight - padding * 0.34);
+  ctx.restore();
 }
 
 async function getPreparedTypography({
