@@ -1,13 +1,22 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import {
   ArrowLeft,
   ArrowRight,
   Check,
+  CreditCard,
+  FolderOpen,
+  Gift,
+  Home,
   ImageUp,
   Loader2,
+  LogIn,
+  LogOut,
   Sparkles,
+  Settings,
+  UserRound,
   Wand2,
   X
 } from "lucide-react";
@@ -322,6 +331,7 @@ export function WorkflowShell() {
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
   const [assetUrls, setAssetUrls] = useState<Record<string, AssetUrlEntry>>({});
   const autoLayoutRequestKeyRef = useRef<string | null>(null);
+  const resumedGenerationJobIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let shouldMarkHydrated = true;
@@ -530,8 +540,56 @@ export function WorkflowShell() {
     };
   }, [draft.generationJobId, draft.generationSlots, session]);
 
+  useEffect(() => {
+    if (
+      !session ||
+      !draft.generationJobId ||
+      !isActiveJobStatus(draft.generationJobStatus) ||
+      isRemoteBusy ||
+      resumedGenerationJobIdRef.current === draft.generationJobId
+    ) {
+      return;
+    }
+
+    let isCancelled = false;
+    resumedGenerationJobIdRef.current = draft.generationJobId;
+    setIsRemoteBusy(true);
+    setRemoteError(null);
+    setRemoteState("진행 중인 시안 생성을 확인하는 중");
+
+    pollJob(session, draft.generationJobId, (nextJob) => {
+      if (!isCancelled) {
+        applyGenerationJob(nextJob);
+        setRemoteState(jobStatusMessage("시안", nextJob.status));
+      }
+    })
+      .then((finalJob) => {
+        if (!isCancelled && finalJob && !isSuccessfulTerminal(finalJob.status) && isTerminalJobStatus(finalJob.status)) {
+          setRemoteError(jobFailureMessage(finalJob));
+        }
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          setRemoteError(errorMessage(error));
+          setRemoteState("진행 중인 시안을 확인하지 못했어요");
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsRemoteBusy(false);
+        }
+        resumedGenerationJobIdRef.current = null;
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [draft.generationJobId, draft.generationJobStatus, isRemoteBusy, session]);
+
   const activeStepIndex = workflowSteps.findIndex((step) => step.id === draft.activeStepId);
   const selectedGenre = genres.find((genre) => genre.id === draft.selectedGenreId) ?? genres[0];
+  const freeGenerationCredits = 3;
+  const paidCredits = 0;
 
   const canGoBack = activeStepIndex > 0;
   const canGoNext = activeStepIndex < workflowSteps.length - 1 && canAdvanceFromStep(draft);
@@ -914,6 +972,44 @@ export function WorkflowShell() {
 
   return (
     <main className="app-shell">
+      <aside className="service-rail" aria-label="서비스 메뉴">
+        <Link className="service-rail-brand" href="/">
+          <span className="brand-mark">
+            <Sparkles size={15} />
+          </span>
+          <span>타이포 포지</span>
+        </Link>
+        <div className="service-account">
+          <UserRound size={16} />
+          <span>{session?.user.email ?? "로그인 필요"}</span>
+        </div>
+        <div className="credit-stack" aria-label="크레딧">
+          <div className="credit-line">
+            <Gift size={15} />
+            <span>무료 생성</span>
+            <strong>{freeGenerationCredits}</strong>
+          </div>
+          <div className="credit-line">
+            <CreditCard size={15} />
+            <span>유료 크레딧</span>
+            <strong>{paidCredits}</strong>
+          </div>
+        </div>
+        <nav className="service-nav" aria-label="작업 메뉴">
+          <Link href="/">
+            <Home size={16} />
+            메인
+          </Link>
+          <Link href={"/works" as Route}>
+            <FolderOpen size={16} />
+            내 작업
+          </Link>
+          <Link href={"/settings" as Route}>
+            <Settings size={16} />
+            설정
+          </Link>
+        </nav>
+      </aside>
       <div className="workflow-frame">
         <header className="topbar">
           <Link className="brand" href="/">
@@ -939,10 +1035,15 @@ export function WorkflowShell() {
               </span>
             ))}
           </nav>
+          <div className="mobile-step-summary" aria-label="현재 단계">
+            <span>{activeStepIndex + 1}/{workflowSteps.length}</span>
+            <strong>{workflowSteps[activeStepIndex]?.label ?? "제작"}</strong>
+          </div>
           <div className="account-control" aria-label="계정">
             <span className={`account-state${session ? " ready" : ""}`}>{authState}</span>
             {session ? (
               <button className="button secondary compact" onClick={signOut} type="button">
+                <LogOut size={14} />
                 로그아웃
               </button>
             ) : (
@@ -952,6 +1053,7 @@ export function WorkflowShell() {
                 onClick={signInWithGoogle}
                 type="button"
               >
+                <LogIn size={14} />
                 Google 로그인
               </button>
             )}
@@ -1563,13 +1665,19 @@ function GenerationStep({
   selectedCandidateId: string;
 }) {
   const slots = slotPlaceholders(generationSlots);
+  const hasActiveGeneration = isActiveJobStatus(generationJobStatus) || slots.some((slot) => isActiveSlotStatus(slot.status));
 
   return (
     <div className="generation-stage">
       <div className="generation-toolbar">
-        <button className="button ai-recommend" disabled={!isSignedIn || isBusy} onClick={onRequestAi} type="button">
-          {isBusy ? <Loader2 className="spin" size={15} /> : <Wand2 size={15} />}
-          3개 시안 생성
+        <button
+          className="button ai-recommend"
+          disabled={!isSignedIn || isBusy || hasActiveGeneration}
+          onClick={onRequestAi}
+          type="button"
+        >
+          {isBusy || hasActiveGeneration ? <Loader2 className="spin" size={15} /> : <Wand2 size={15} />}
+          {hasActiveGeneration ? "시안 생성 중" : "3개 시안 생성"}
         </button>
         <div className="generation-status">
           <p className="control-note">{isSignedIn ? actionState : "로그인 후 AI 시안 생성을 사용할 수 있어요."}</p>
@@ -1610,6 +1718,8 @@ function GenerationSlotCard({
   slot: GenerationSlot;
 }) {
   const assetUrl = slot.candidateAssetId ? assetUrls[slot.candidateAssetId]?.url : null;
+  const isActive = isActiveSlotStatus(slot.status);
+  const isWaiting = slot.status === "waiting";
   return (
     <button
       className={`generation-slot status-${slot.status.replace(/[^a-z0-9_-]/gi, "-")}${isSelected ? " selected" : ""}`}
@@ -1633,15 +1743,27 @@ function GenerationSlotCard({
             }}
             src={assetUrl}
           />
-        ) : (
+        ) : isWaiting ? (
+          <span className="candidate-idle-visual" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        ) : isActive ? (
           <span className="candidate-loading-visual" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        ) : (
+          <span className="candidate-failed-visual" aria-hidden="true">
             <span />
             <span />
             <span />
           </span>
         )}
       </div>
-      {isActiveSlotStatus(slot.status) ? <Loader2 className="slot-loader spin" size={18} /> : null}
+      {isActive ? <Loader2 className="slot-loader spin" size={18} /> : null}
       <strong>타이포 시안 {slot.slotIndex}</strong>
       <span>{slotStatusText(slot.status)}</span>
       {slot.candidateAssetId ? (
@@ -2139,6 +2261,10 @@ function isTerminalJobStatus(status: string) {
 
 function isSuccessfulTerminal(status: string) {
   return status === "succeeded" || status === "partially_succeeded";
+}
+
+function isActiveJobStatus(status: string | null) {
+  return Boolean(status && !isTerminalJobStatus(status));
 }
 
 function isActiveSlotStatus(status: string) {
