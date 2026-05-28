@@ -68,7 +68,7 @@ const genres = [
 type CoverDraft = {
   name: string;
   size: number;
-  previewDataUrl: string;
+  previewDataUrl?: string | null;
 };
 
 type LayoutCanvas = {
@@ -178,6 +178,66 @@ function normalizeDraft(rawDraft: Record<string, unknown>): GuestDraft {
   };
 }
 
+function draftForBrowserStorage(draft: GuestDraft): GuestDraft {
+  return {
+    ...draft,
+    cover: draft.cover
+      ? {
+          name: draft.cover.name,
+          size: draft.cover.size,
+          previewDataUrl: null
+        }
+      : null
+  };
+}
+
+function completedRecordForBrowserStorage(record: CompletedWorkRecord): CompletedWorkRecord {
+  return {
+    ...record,
+    draft: record.draft ? draftForBrowserStorage(record.draft) : undefined
+  };
+}
+
+function persistJsonToBrowserStorage(key: string, value: unknown) {
+  const serialized = JSON.stringify(value);
+  try {
+    window.localStorage.setItem(key, serialized);
+    return true;
+  } catch {
+    try {
+      window.localStorage.removeItem(key);
+      window.localStorage.setItem(key, serialized);
+      return true;
+    } catch {
+      if (key !== completedStorageKey && compactCompletedRecordsForStorage()) {
+        try {
+          window.localStorage.setItem(key, serialized);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    }
+  }
+}
+
+function compactCompletedRecordsForStorage() {
+  try {
+    const records = readCompletedRecords().map(completedRecordForBrowserStorage).slice(0, 12);
+    window.localStorage.removeItem(completedStorageKey);
+    window.localStorage.setItem(completedStorageKey, JSON.stringify(records));
+    return true;
+  } catch {
+    try {
+      window.localStorage.removeItem(completedStorageKey);
+    } catch {
+      // Ignore browser storage cleanup failures.
+    }
+    return false;
+  }
+}
+
 function readCompletedRecords(): CompletedWorkRecord[] {
   try {
     const saved = window.localStorage.getItem(completedStorageKey);
@@ -185,7 +245,9 @@ function readCompletedRecords(): CompletedWorkRecord[] {
     if (!Array.isArray(parsed)) {
       return [];
     }
-    return parsed.filter((item): item is CompletedWorkRecord => Boolean(item?.id));
+    return parsed
+      .filter((item): item is CompletedWorkRecord => Boolean(item?.id))
+      .map(completedRecordForBrowserStorage);
   } catch {
     return [];
   }
@@ -275,7 +337,7 @@ export function WorkflowShell() {
       } else if (shouldStartNew) {
         const nextDraft = { ...defaultDraft, ownerUserId: session?.user.id ?? null };
         setDraft(nextDraft);
-        window.localStorage.setItem(draftStorageKeyFor(nextDraft.ownerUserId), JSON.stringify(nextDraft));
+        persistJsonToBrowserStorage(draftStorageKeyFor(nextDraft.ownerUserId), draftForBrowserStorage(nextDraft));
         window.history.replaceState(null, "", "/create");
       } else {
         setShouldLoadSavedDraft(true);
@@ -334,11 +396,10 @@ export function WorkflowShell() {
       updatedAt: new Date().toISOString()
     };
 
-    try {
-      window.localStorage.setItem(draftStorageKeyFor(ownerUserId), JSON.stringify(nextDraft));
+    if (persistJsonToBrowserStorage(draftStorageKeyFor(ownerUserId), draftForBrowserStorage(nextDraft))) {
       setSaveState("임시 저장됨");
-    } catch {
-      setSaveState("저장 공간이 부족해요");
+    } else {
+      setSaveState("저장 공간을 정리해주세요");
     }
   }, [draft, isHydrated, session?.user.id]);
 
@@ -835,8 +896,14 @@ export function WorkflowShell() {
           !isSameCompletedWork(item, completedDraft, titleText, selectedGenre.name, draft.effectPresetId, ownerUserId)
         )
       ].slice(0, 12);
-      window.localStorage.setItem(completedStorageKey, JSON.stringify(nextRecords));
-      window.localStorage.setItem(draftStorageKeyFor(ownerUserId), JSON.stringify(completedDraft));
+      const persistedRecords = nextRecords.map(completedRecordForBrowserStorage);
+      const persistedDraft = draftForBrowserStorage(completedDraft);
+      if (
+        !persistJsonToBrowserStorage(completedStorageKey, persistedRecords) ||
+        !persistJsonToBrowserStorage(draftStorageKeyFor(ownerUserId), persistedDraft)
+      ) {
+        throw new Error("Browser storage quota exceeded.");
+      }
       setDraft(completedDraft);
       setSaveState("완료됨");
     } catch {
@@ -1066,9 +1133,19 @@ function CoverStep({
         <span>업로드는 선택 사항입니다.</span>
       </label>
       <div className="cover-preview">
-        {cover ? (
+        {cover?.previewDataUrl ? (
           <>
             <img alt="선택한 표지 미리보기" src={cover.previewDataUrl} />
+            <button className="icon-button" onClick={onClear} type="button" aria-label="표지 제거">
+              <X size={16} />
+            </button>
+            <p>{cover.name}</p>
+          </>
+        ) : cover ? (
+          <>
+            <div className="empty-cover">
+              <span className="empty-cover-visual" aria-hidden="true" />
+            </div>
             <button className="icon-button" onClick={onClear} type="button" aria-label="표지 제거">
               <X size={16} />
             </button>
