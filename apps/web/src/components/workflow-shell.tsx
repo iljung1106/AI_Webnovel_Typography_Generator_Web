@@ -279,6 +279,22 @@ function draftStorageKeyFor(ownerUserId: string | null) {
   return ownerUserId ? `${draftStorageKey}:${ownerUserId}` : `${draftStorageKey}:anonymous`;
 }
 
+function hasRecoverableDraftWork(draft: GuestDraft) {
+  return Boolean(
+    draft.projectId ||
+      draft.versionId ||
+      draft.completedWorkId ||
+      draft.title.trim() ||
+      draft.cover ||
+      draft.layoutItems.length ||
+      draft.stylePrompt.trim() ||
+      draft.styleResolution ||
+      draft.generationJobId ||
+      draft.generationSlots.length ||
+      draft.selectedCandidateId
+  );
+}
+
 function readCompletedDraft(workId: string, ownerUserId: string | null): GuestDraft | null {
   const record = readCompletedRecords().find((item) => item.id === workId && item.ownerUserId === ownerUserId);
   if (!record) {
@@ -505,7 +521,9 @@ export function WorkflowShell() {
   const [authState, setAuthState] = useState(isSupabaseConfigured ? "로그인 확인 중" : "로그인 준비 중");
   const [remoteState, setRemoteState] = useState("AI 작업을 시작할 수 있어요.");
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isRemoteBusy, setIsRemoteBusy] = useState(false);
+  const [isStepTransitionBusy, setIsStepTransitionBusy] = useState(false);
   const [assetUrls, setAssetUrls] = useState<Record<string, AssetUrlEntry>>({});
   const [creditSummary, setCreditSummary] = useState<CreditSummaryResponse | null>(null);
   const autoLayoutRequestKeyRef = useRef<string | null>(null);
@@ -534,12 +552,10 @@ export function WorkflowShell() {
       } else if (shouldStartNew) {
         const nextDraft = { ...defaultDraft, ownerUserId: session?.user.id ?? null };
         setDraft(nextDraft);
-        persistJsonToBrowserStorage(draftStorageKeyFor(nextDraft.ownerUserId), draftForBrowserStorage(nextDraft));
         window.history.replaceState(null, "", "/create");
       } else {
         const nextDraft = { ...defaultDraft, ownerUserId: session?.user.id ?? null };
         setDraft(nextDraft);
-        persistJsonToBrowserStorage(draftStorageKeyFor(nextDraft.ownerUserId), draftForBrowserStorage(nextDraft));
       }
     } catch {
       setSaveState("임시 저장을 불러오지 못했어요");
@@ -613,6 +629,12 @@ export function WorkflowShell() {
       ownerUserId,
       updatedAt: new Date().toISOString()
     };
+
+    if (!hasRecoverableDraftWork(nextDraft)) {
+      setSaveState("작성 준비 중");
+      setSaveError(null);
+      return;
+    }
 
     const browserSaveOk = persistJsonToBrowserStorage(draftStorageKeyFor(ownerUserId), draftForBrowserStorage(nextDraft));
     if (!browserSaveOk) {
@@ -805,7 +827,13 @@ export function WorkflowShell() {
   }, [draft.generationJobId, draft.generationSlots, session]);
 
   useEffect(() => {
-    if (!session || !draft.projectId || !draft.versionId || draft.generationJobId) {
+    if (
+      !session ||
+      draft.activeStepId !== "generation" ||
+      !draft.projectId ||
+      !draft.versionId ||
+      draft.generationJobId
+    ) {
       return;
     }
     let isCancelled = false;
@@ -822,7 +850,7 @@ export function WorkflowShell() {
     return () => {
       isCancelled = true;
     };
-  }, [draft.generationJobId, draft.projectId, draft.versionId, session]);
+  }, [draft.activeStepId, draft.generationJobId, draft.projectId, draft.versionId, session]);
 
   useEffect(() => {
     if (
@@ -876,7 +904,7 @@ export function WorkflowShell() {
   const paidCredits = creditSummary?.paid_credit_balance ?? 0;
 
   const canGoBack = activeStepIndex > 0;
-  const canGoNext = activeStepIndex < workflowSteps.length - 1 && canAdvanceFromStep(draft);
+  const canGoNext = activeStepIndex < workflowSteps.length - 1 && canAdvanceFromStep(draft) && !isStepTransitionBusy;
   const stepMeta = useMemo(() => getStepMeta(draft.activeStepId), [draft.activeStepId]);
 
   function updateDraft(nextDraft: Partial<GuestDraft>) {
@@ -902,10 +930,11 @@ export function WorkflowShell() {
       serverSaveRevisionRef.current = version.save_revision ?? serverSaveRevisionRef.current;
       lastServerSnapshotRef.current = snapshot;
       setSaveState("저장됨");
+      setSaveError(null);
       return version;
     } catch (error) {
       setSaveState("저장 실패");
-      setRemoteError(errorMessage(error));
+      setSaveError(errorMessage(error));
       return null;
     }
   }
@@ -940,12 +969,16 @@ export function WorkflowShell() {
       versionId: draft.versionId
     };
     if (draft.activeStepId === "title" && session && draft.title.trim() && !draft.projectId && !draft.versionId) {
+      setIsStepTransitionBusy(true);
+      setSaveError(null);
       try {
         remoteIds = await ensureRemoteDraft(session);
       } catch (error) {
-        setRemoteError(errorMessage(error));
+        setSaveError(errorMessage(error));
         setRemoteState("작업 저장 실패");
         return;
+      } finally {
+        setIsStepTransitionBusy(false);
       }
     }
 
@@ -1585,14 +1618,14 @@ export function WorkflowShell() {
         </section>
 
         <footer className="footerbar">
-          <span className="note">{saveState}</span>
+          <span className={`note${saveError ? " error" : ""}`}>{saveError ?? saveState}</span>
           <div className="button-row">
             <button className="button secondary" disabled={!canGoBack} onClick={goBack} type="button">
               <ArrowLeft size={16} />
               이전
             </button>
             <button className="button primary" disabled={!canGoNext} onClick={goNext} type="button">
-              다음
+              {isStepTransitionBusy ? "저장 중" : "다음"}
               <ArrowRight size={16} />
             </button>
           </div>
@@ -2722,6 +2755,8 @@ function errorMessage(error: unknown) {
     return "로그인이 만료되었어요. 다시 로그인해주세요.";
   }
   if (
+    lowerMessage.includes("failed to fetch") ||
+    lowerMessage.includes("networkerror") ||
     lowerMessage.includes("supabase") ||
     lowerMessage.includes("api request") ||
     lowerMessage.includes("internal server") ||

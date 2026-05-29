@@ -1583,6 +1583,10 @@ button:disabled {
   font-size: 13px;
 }
 
+.note.error {
+  color: #b42318;
+}
+
 .utility-page {
   min-height: 100vh;
   padding: 24px;

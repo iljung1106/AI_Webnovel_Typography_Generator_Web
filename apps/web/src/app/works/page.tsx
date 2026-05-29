@@ -8,29 +8,6 @@ import { useEffect, useState } from "react";
 import { listProjects } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase";
 
-type CompletedWork = {
-  id: string;
-  title: string;
-  genre: string;
-  presetId: string;
-  ownerUserId?: string | null;
-  createdAt: string;
-  updatedAt?: string;
-  draft?: DraftWork;
-};
-
-type DraftWork = {
-  ownerUserId?: string | null;
-  completedWorkId?: string | null;
-  activeStepId?: string;
-  selectedGenreId?: string;
-  title?: string;
-  updatedAt?: string | null;
-  projectId?: string | null;
-  versionId?: string | null;
-  generationJobId?: string | null;
-};
-
 type WorkListItem = {
   id: string;
   title: string;
@@ -38,17 +15,6 @@ type WorkListItem = {
   status: "draft" | "completed" | "generating";
   href: Route;
   updatedAt: string;
-};
-
-const draftStorageKey = "typography-forge:guest-draft:v1";
-const completedStorageKey = "typography-forge:completed:v1";
-
-const genreNames: Record<string, string> = {
-  "romance-fantasy": "로맨스 판타지",
-  modern: "현대",
-  fantasy: "판타지",
-  "martial-arts": "무협",
-  healing: "힐링"
 };
 
 export default function WorksPage() {
@@ -94,12 +60,12 @@ export default function WorksPage() {
     listProjects(session)
       .then((items) => {
         if (!isCancelled) {
-          setWorks(mergeWorks(mapRemoteWorks(items), readOwnedWorks(session.user.id)));
+          setWorks(mapRemoteWorks(items));
         }
       })
       .catch(() => {
         if (!isCancelled) {
-          setWorks(readOwnedWorks(session.user.id));
+          setWorks([]);
         }
       });
     return () => {
@@ -164,89 +130,6 @@ function mapRemoteWorks(
     href: item.version_id ? (`/create?projectId=${item.project_id}&versionId=${item.version_id}` as Route) : ("/create" as Route),
     updatedAt: item.updated_at ?? new Date(0).toISOString()
   }));
-}
-
-function mergeWorks(remoteWorks: WorkListItem[], localWorks: WorkListItem[]) {
-  const seen = new Set<string>();
-  return [...remoteWorks, ...localWorks]
-    .filter((work) => {
-      const key = work.href.toString();
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-}
-
-function readOwnedWorks(ownerUserId: string | null): WorkListItem[] {
-  if (!ownerUserId) {
-    return [];
-  }
-
-  const draft = readOwnedDraft(ownerUserId);
-  const completedItems = readOwnedCompletedWorks(ownerUserId).map((work) => ({
-    id: `completed:${work.id}`,
-    title: work.title || "타이포 시안",
-    genre: work.genre || genreNames[work.draft?.selectedGenreId ?? ""] || "타이포",
-    status: "completed" as const,
-    href:
-      work.draft?.projectId && work.draft.versionId
-        ? (`/create?projectId=${work.draft.projectId}&versionId=${work.draft.versionId}` as Route)
-        : (`/create?workId=${encodeURIComponent(work.id)}` as Route),
-    updatedAt: work.updatedAt ?? work.createdAt ?? new Date(0).toISOString()
-  }));
-
-  const draftItem =
-    draft && !draft.completedWorkId
-      ? {
-          id: "draft:active",
-          title: draft.title?.trim() || "새 타이포 작업",
-          genre: genreNames[draft.selectedGenreId ?? ""] ?? "타이포",
-          status: draft.generationJobId ? ("generating" as const) : ("draft" as const),
-          href:
-            draft.projectId && draft.versionId
-              ? (`/create?projectId=${draft.projectId}&versionId=${draft.versionId}` as Route)
-              : ("/create" as Route),
-          updatedAt: draft.updatedAt ?? new Date(0).toISOString()
-        }
-      : null;
-
-  return [draftItem, ...completedItems]
-    .filter((item): item is WorkListItem => Boolean(item))
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-}
-
-function readOwnedDraft(ownerUserId: string): DraftWork | null {
-  try {
-    const saved = window.localStorage.getItem(`${draftStorageKey}:${ownerUserId}`);
-    const parsed = saved ? JSON.parse(saved) : null;
-    if (!parsed || typeof parsed !== "object" || parsed.ownerUserId !== ownerUserId) {
-      return null;
-    }
-    const hasWork =
-      Boolean(String(parsed.title ?? "").trim()) ||
-      Boolean(parsed.projectId) ||
-      Boolean(parsed.versionId) ||
-      Boolean(parsed.generationJobId);
-    return hasWork ? (parsed as DraftWork) : null;
-  } catch {
-    return null;
-  }
-}
-
-function readOwnedCompletedWorks(ownerUserId: string): CompletedWork[] {
-  try {
-    const saved = window.localStorage.getItem(completedStorageKey);
-    const parsed = saved ? JSON.parse(saved) : [];
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter((item): item is CompletedWork => Boolean(item?.id) && item.ownerUserId === ownerUserId);
-  } catch {
-    return [];
-  }
 }
 
 function formatDate(value: string) {

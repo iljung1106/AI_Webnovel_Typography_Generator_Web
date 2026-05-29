@@ -5,6 +5,7 @@ import type { Route } from "next";
 import type { Session } from "@supabase/supabase-js";
 import { ArrowRight, Clock3, LogIn, LogOut, PenLine, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
+import { listProjects } from "@/lib/api-client";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import styles from "./landing-page.module.css";
 
@@ -12,45 +13,15 @@ type LandingPageProps = {
   createHref?: Route;
 };
 
-type CompletedWork = {
-  id: string;
-  title: string;
-  genre: string;
-  presetId: string;
-  ownerUserId?: string | null;
-  createdAt: string;
-  updatedAt?: string;
-  draft?: DraftWork;
-};
-
-type DraftWork = {
-  ownerUserId?: string | null;
-  completedWorkId?: string | null;
-  activeStepId?: string;
-  selectedGenreId?: string;
-  title?: string;
-  updatedAt?: string | null;
-};
-
 type WorkListItem = {
   id: string;
   title: string;
   genre: string;
-  status: "draft" | "completed";
+  status: "draft" | "completed" | "generating";
   href: Route;
   updatedAt: string;
 };
 
-const genreNames: Record<string, string> = {
-  "romance-fantasy": "로맨스 판타지",
-  modern: "현대",
-  fantasy: "판타지",
-  "martial-arts": "무협",
-  healing: "힐링"
-};
-
-const draftStorageKey = "typography-forge:guest-draft:v1";
-const completedStorageKey = "typography-forge:completed:v1";
 const defaultCreateHref = "/create?new=1" as Route;
 
 export function LandingPage({ createHref = defaultCreateHref }: LandingPageProps) {
@@ -63,18 +34,36 @@ export function LandingPage({ createHref = defaultCreateHref }: LandingPageProps
       return;
     }
 
+    if (!session) {
+      setWorks([]);
+      return;
+    }
+
+    const activeSession = session;
+    let isCancelled = false;
     function refreshWorks() {
-      setWorks(readOwnedWorks(session?.user.id ?? null).slice(0, 6));
+      listProjects(activeSession)
+        .then((items) => {
+          if (!isCancelled) {
+            setWorks(mapRemoteWorks(items).slice(0, 6));
+          }
+        })
+        .catch(() => {
+          if (!isCancelled) {
+            setWorks([]);
+          }
+        });
     }
 
     refreshWorks();
     window.addEventListener("focus", refreshWorks);
     document.addEventListener("visibilitychange", refreshWorks);
     return () => {
+      isCancelled = true;
       window.removeEventListener("focus", refreshWorks);
       document.removeEventListener("visibilitychange", refreshWorks);
     };
-  }, [isAuthChecked, session?.user.id]);
+  }, [isAuthChecked, session]);
 
   useEffect(() => {
     if (!supabase) {
@@ -177,8 +166,8 @@ export function LandingPage({ createHref = defaultCreateHref }: LandingPageProps
             {works.map((work) => (
               <Link className={styles.recentCard} href={work.href} key={work.id}>
                 <span className={styles.statusPill}>
-                  {work.status === "draft" ? <Clock3 size={13} /> : <Sparkles size={13} />}
-                  {work.status === "draft" ? "작성 중" : "완료"}
+                  {work.status === "completed" ? <Sparkles size={13} /> : <Clock3 size={13} />}
+                  {work.status === "completed" ? "완료" : work.status === "generating" ? "생성 중" : "작성 중"}
                 </span>
                 <strong>{work.title}</strong>
                 <span>{work.genre}</span>
@@ -191,69 +180,13 @@ export function LandingPage({ createHref = defaultCreateHref }: LandingPageProps
   );
 }
 
-function readOwnedWorks(ownerUserId: string | null): WorkListItem[] {
-  if (!ownerUserId) {
-    return [];
-  }
-
-  const draft = readOwnedDraft(ownerUserId);
-  const completedWorks = readOwnedCompletedWorks(ownerUserId);
-  const completedItems = completedWorks.map((work) => ({
-    id: `completed:${work.id}`,
-    title: work.title || "타이포 시안",
-    genre: work.genre || genreNames[work.draft?.selectedGenreId ?? ""] || "타이포",
-    status: "completed" as const,
-    href: `/create?workId=${encodeURIComponent(work.id)}` as Route,
-    updatedAt: work.updatedAt ?? work.createdAt ?? new Date(0).toISOString()
+function mapRemoteWorks(items: Awaited<ReturnType<typeof listProjects>>): WorkListItem[] {
+  return items.map((item) => ({
+    id: `project:${item.project_id}`,
+    title: item.title || "타이포 작업",
+    genre: item.genre || "타이포",
+    status: item.active_job_id ? "generating" : item.status === "completed" ? "completed" : "draft",
+    href: item.version_id ? (`/create?projectId=${item.project_id}&versionId=${item.version_id}` as Route) : ("/create?new=1" as Route),
+    updatedAt: item.updated_at ?? new Date(0).toISOString()
   }));
-
-  const draftItem =
-    draft && !draft.completedWorkId
-      ? {
-          id: "draft:active",
-          title: draft.title?.trim() || "새 타이포 작업",
-          genre: genreNames[draft.selectedGenreId ?? ""] ?? "타이포",
-          status: "draft" as const,
-          href: "/create" as Route,
-          updatedAt: draft.updatedAt ?? new Date(0).toISOString()
-        }
-      : null;
-
-  return [draftItem, ...completedItems]
-    .filter((item): item is WorkListItem => Boolean(item))
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-}
-
-function readOwnedDraft(ownerUserId: string): DraftWork | null {
-  try {
-    const saved = window.localStorage.getItem(`${draftStorageKey}:${ownerUserId}`);
-    const parsed = saved ? JSON.parse(saved) : null;
-    if (!parsed || typeof parsed !== "object" || parsed.ownerUserId !== ownerUserId) {
-      return null;
-    }
-    const hasWork =
-      Boolean(String(parsed.title ?? "").trim()) ||
-      Boolean(parsed.projectId) ||
-      Boolean(parsed.versionId) ||
-      Boolean(parsed.layoutJobId) ||
-      Boolean(parsed.styleJobId) ||
-      Boolean(parsed.generationJobId);
-    return hasWork ? (parsed as DraftWork) : null;
-  } catch {
-    return null;
-  }
-}
-
-function readOwnedCompletedWorks(ownerUserId: string): CompletedWork[] {
-
-  try {
-    const saved = window.localStorage.getItem(completedStorageKey);
-    const parsed = saved ? JSON.parse(saved) : [];
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter((item): item is CompletedWork => Boolean(item?.id) && item.ownerUserId === ownerUserId);
-  } catch {
-    return [];
-  }
 }

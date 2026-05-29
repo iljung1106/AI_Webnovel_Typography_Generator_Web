@@ -100,8 +100,8 @@ class SupabaseRestClient:
         if not isinstance(current_state, dict):
             current_state = {}
         next_state = _deep_merge_dicts(current_state, state_patch)
-        next_state.setdefault("schemaVersion", 1)
-        next_state.setdefault("activeStepId", current_step)
+        next_state["schemaVersion"] = 1
+        next_state["activeStepId"] = current_step
         next_revision = int(rows[0].get("save_revision") or 0) + 1
         self.patch_rows(
             "project_versions",

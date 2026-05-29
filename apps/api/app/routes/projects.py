@@ -20,6 +20,7 @@ from ..schemas import (
 )
 from ..security import get_current_user
 from ..supabase_client import SupabaseConfigError, SupabaseRequestError, supabase
+from ..workflow_state import merge_client_workflow_state, normalize_workflow_state
 
 router = APIRouter()
 MAX_WORKFLOW_STATE_BYTES = 256_000
@@ -72,13 +73,18 @@ async def list_projects(
             if version:
                 thumbnail_asset_id = version.get("selected_candidate_id") or version.get("cover_asset_id")
             title = project.get("title") or (version.get("title_text") if version else "") or "타이포 작업"
+            status_value = project.get("status", "draft")
+            if active_job:
+                status_value = "generating"
+            elif version and version.get("current_step") == "export":
+                status_value = "completed"
             items.append(
                 WorkListItem(
                     project_id=project["id"],
                     version_id=version["id"] if version else None,
                     title=title,
                     genre=None,
-                    status="generating" if active_job else project.get("status", "draft"),
+                    status=status_value,
                     thumbnail_asset_id=thumbnail_asset_id,
                     thumbnail_expired=False,
                     active_job_id=active_job["id"] if active_job else None,
@@ -151,7 +157,7 @@ async def create_project_version(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Project version was not created.",
         )
-    return ProjectVersionResponse(**rows[0])
+    return _version_response(rows[0])
 
 
 @router.patch("/{project_id}/versions/{version_id}", response_model=ProjectVersionResponse)
@@ -169,7 +175,7 @@ async def patch_project_version(
             if isinstance(value, UUID):
                 updates[key] = str(value)
         if not updates:
-            return ProjectVersionResponse(**version)
+            return _version_response(version)
         if payload.selected_candidate_id:
             asset = get_owned_asset(payload.selected_candidate_id, user.user_id)
             if asset.get("project_id") and asset["project_id"] != str(project_id):
@@ -192,7 +198,7 @@ async def patch_project_version(
         raise supabase_http_error(exc) from exc
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project version not found.")
-    return ProjectVersionResponse(**rows[0])
+    return _version_response(rows[0])
 
 
 @router.patch("/{project_id}/versions/{version_id}/state", response_model=ProjectVersionResponse)
@@ -221,17 +227,30 @@ async def patch_project_version_state(
 
         now = datetime.now(timezone.utc).isoformat()
         next_revision = int(version.get("save_revision") or 0) + 1
+        next_state = merge_client_workflow_state(
+            version.get("workflow_state_json"),
+            payload.workflow_state_json,
+            current_step=payload.current_step,
+        )
+        encoded_next_state = json.dumps(next_state, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded_next_state) > MAX_WORKFLOW_STATE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Workflow state is too large.",
+            )
+        params = {
+            "select": VERSION_COLUMNS,
+            "id": f"eq.{version_id}",
+            "project_id": f"eq.{project_id}",
+        }
+        if payload.base_revision is not None:
+            params["save_revision"] = f"eq.{version.get('save_revision', 0)}"
         rows = supabase.update(
             "project_versions",
-            {
-                "select": VERSION_COLUMNS,
-                "id": f"eq.{version_id}",
-                "project_id": f"eq.{project_id}",
-                "save_revision": f"eq.{version.get('save_revision', 0)}",
-            },
+            params,
             {
                 "current_step": payload.current_step,
-                "workflow_state_json": payload.workflow_state_json,
+                "workflow_state_json": next_state,
                 "save_revision": next_revision,
                 "last_saved_at": now,
             },
@@ -250,7 +269,7 @@ async def patch_project_version_state(
         raise
     except (SupabaseConfigError, SupabaseRequestError) as exc:
         raise supabase_http_error(exc) from exc
-    return ProjectVersionResponse(**rows[0])
+    return _version_response(rows[0])
 
 
 @router.get("/{project_id}/versions/{version_id}", response_model=ProjectVersionResponse)
@@ -264,7 +283,18 @@ async def get_project_version_route(
         version = get_project_version(project_id, version_id)
     except (SupabaseConfigError, SupabaseRequestError) as exc:
         raise supabase_http_error(exc) from exc
-    return ProjectVersionResponse(**version)
+    return _version_response(version)
+
+
+def _version_response(version: dict) -> ProjectVersionResponse:
+    current_step = str(version.get("current_step") or "genre")
+    return ProjectVersionResponse(
+        **{
+            **version,
+            "current_step": current_step,
+            "workflow_state_json": normalize_workflow_state(version.get("workflow_state_json"), current_step),
+        }
+    )
 
 
 def _latest_version(project_id: str) -> dict | None:

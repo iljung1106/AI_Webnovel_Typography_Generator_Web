@@ -12,6 +12,7 @@ from ..errors import supabase_http_error
 from ..schemas import JobCreate, JobResponse, UserContext
 from ..security import get_current_user
 from ..supabase_client import SupabaseConfigError, SupabaseRequestError, supabase
+from ..workflow_state import merge_server_workflow_patch
 
 router = APIRouter()
 
@@ -397,9 +398,7 @@ def _merge_version_workflow_state(
     current_state = rows[0].get("workflow_state_json") or {}
     if not isinstance(current_state, dict):
         current_state = {}
-    next_state = _deep_merge_dicts(current_state, state_patch)
-    next_state.setdefault("schemaVersion", 1)
-    next_state.setdefault("activeStepId", current_step)
+    next_state = merge_server_workflow_patch(current_state, state_patch, current_step=current_step)
     supabase.update(
         "project_versions",
         {"id": f"eq.{version_id}"},
@@ -410,17 +409,6 @@ def _merge_version_workflow_state(
             "last_saved_at": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
         },
     )
-
-
-def _deep_merge_dicts(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in patch.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge_dicts(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
 
 def _job_idempotency_key(payload: JobCreate) -> str:
     return f"{payload.type}:{payload.project_id}:{payload.version_id}"
