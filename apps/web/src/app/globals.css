@@ -1200,13 +1200,24 @@ button:disabled {
 .effects-stage,
 .export-stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
   gap: 16px;
   margin-top: 28px;
+  align-items: start;
+}
+
+.effects-stage {
+  grid-template-columns: minmax(560px, 1fr) minmax(300px, 340px);
+}
+
+.export-stage {
+  grid-template-columns: minmax(0, 1fr) 280px;
 }
 
 .effect-side-panel {
+  position: relative;
+  z-index: 3;
   display: grid;
+  min-width: 300px;
   align-self: start;
   gap: 14px;
 }
@@ -1294,6 +1305,7 @@ button:disabled {
   position: relative;
   display: grid;
   aspect-ratio: 2 / 1;
+  min-width: 0;
   min-height: 420px;
   place-items: center;
   overflow: hidden;
@@ -1316,8 +1328,12 @@ button:disabled {
   position: relative;
   z-index: 1;
   display: grid;
-  width: min(92%, 860px);
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
   place-items: center;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .typo-effector-frame.editable {
@@ -1329,7 +1345,17 @@ button:disabled {
   cursor: grabbing;
 }
 
-.typo-effector-frame canvas {
+.typo-effector-stage {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: min(92%, 860px);
+  place-items: center;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.typo-effector-stage canvas {
   display: block;
   width: auto;
   max-width: 100%;
@@ -1338,14 +1364,55 @@ button:disabled {
   object-fit: contain;
 }
 
-.typo-effector-frame > span {
+.typo-effector-status {
   position: absolute;
+  z-index: 5;
   padding: 8px 12px;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.82);
   color: var(--ink-muted);
   font-size: 13px;
+}
+
+.viewport-controls {
+  position: absolute;
+  z-index: 6;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 12px 32px rgba(25, 31, 44, 0.08);
+  color: var(--ink-muted);
+  cursor: default;
+}
+
+.viewport-controls button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+}
+
+.viewport-controls button:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.viewport-controls strong {
+  min-width: 44px;
+  color: var(--ink);
+  font-size: 12px;
+  text-align: center;
 }
 
 .effect-transform-box {
@@ -1743,6 +1810,7 @@ button:disabled {
   .workspace,
   .cover-grid,
   .layout-stage,
+  .effects-stage,
   .settings-grid,
   .work-list {
     grid-template-columns: 1fr;
@@ -1750,6 +1818,17 @@ button:disabled {
 
   .side-panel {
     align-self: stretch;
+  }
+
+  .effect-side-panel {
+    min-width: 0;
+  }
+
+  .effect-presets {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(210px, 1fr);
+    overflow-x: auto;
+    padding-bottom: 4px;
   }
 }
 

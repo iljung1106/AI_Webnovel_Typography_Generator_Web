@@ -1,5 +1,6 @@
 "use client";
 
+import { Maximize2, Minus, Move, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
@@ -39,6 +40,18 @@ type CanvasMetrics = {
   height: number;
 };
 
+type ViewportState = {
+  scale: number;
+  x: number;
+  y: number;
+};
+
+type ViewportDragState = {
+  pointerId: number;
+  startClient: { x: number; y: number };
+  viewport: ViewportState;
+};
+
 export function TypoEffectorCanvas({
   backgroundUrl,
   className,
@@ -52,11 +65,14 @@ export function TypoEffectorCanvas({
 }: TypoEffectorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const viewportDragRef = useRef<ViewportDragState | null>(null);
   const onRenderRef = useRef(onRender);
   const [canvasMetrics, setCanvasMetrics] = useState<CanvasMetrics | null>(null);
   const [status, setStatus] = useState<"rendering" | "ready" | "failed">("rendering");
   const [renderResult, setRenderResult] = useState<TypoEffectRenderResult | null>(null);
+  const [viewport, setViewport] = useState<ViewportState>({ scale: 1, x: 0, y: 0 });
 
   useEffect(() => {
     onRenderRef.current = onRender;
@@ -94,13 +110,15 @@ export function TypoEffectorCanvas({
     updateCanvasMetrics();
     const canvas = canvasRef.current;
     const frame = frameRef.current;
-    if (!canvas || !frame) {
+    const stage = stageRef.current;
+    if (!canvas || !frame || !stage) {
       return;
     }
 
     const resizeObserver = new ResizeObserver(updateCanvasMetrics);
     resizeObserver.observe(canvas);
     resizeObserver.observe(frame);
+    resizeObserver.observe(stage);
     window.addEventListener("resize", updateCanvasMetrics);
     return () => {
       resizeObserver.disconnect();
@@ -110,20 +128,17 @@ export function TypoEffectorCanvas({
 
   function updateCanvasMetrics() {
     const canvas = canvasRef.current;
-    const frame = frameRef.current;
-    if (!canvas || !frame) {
+    if (!canvas) {
       return;
     }
-    const canvasRect = canvas.getBoundingClientRect();
-    const frameRect = frame.getBoundingClientRect();
-    if (!canvasRect.width || !canvasRect.height) {
+    if (!canvas.clientWidth || !canvas.clientHeight) {
       return;
     }
     setCanvasMetrics({
-      left: canvasRect.left - frameRect.left,
-      top: canvasRect.top - frameRect.top,
-      width: canvasRect.width,
-      height: canvasRect.height
+      left: canvas.offsetLeft,
+      top: canvas.offsetTop,
+      width: canvas.clientWidth,
+      height: canvas.clientHeight
     });
   }
 
@@ -207,6 +222,46 @@ export function TypoEffectorCanvas({
     if (dragRef.current?.pointerId === event.pointerId) {
       dragRef.current = null;
     }
+    if (viewportDragRef.current?.pointerId === event.pointerId) {
+      viewportDragRef.current = null;
+    }
+  }
+
+  function handleViewportPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest(".effect-transform-box") || target.closest(".viewport-controls")) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    viewportDragRef.current = {
+      pointerId: event.pointerId,
+      startClient: { x: event.clientX, y: event.clientY },
+      viewport
+    };
+  }
+
+  function handleViewportPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = viewportDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    setViewport({
+      ...drag.viewport,
+      x: drag.viewport.x + event.clientX - drag.startClient.x,
+      y: drag.viewport.y + event.clientY - drag.startClient.y
+    });
+  }
+
+  function zoomViewport(delta: number) {
+    setViewport((current) => ({
+      ...current,
+      scale: clamp(Number((current.scale + delta).toFixed(2)), 0.5, 3)
+    }));
+  }
+
+  function resetViewport() {
+    setViewport({ scale: 1, x: 0, y: 0 });
   }
 
   return (
@@ -214,37 +269,62 @@ export function TypoEffectorCanvas({
       ref={frameRef}
       className={`typo-effector-frame${onPlacementChange ? " editable" : ""}${className ? ` ${className}` : ""}`}
       data-status={status}
+      onPointerDown={handleViewportPointerDown}
+      onPointerMove={handleViewportPointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
     >
-      <canvas ref={canvasRef} />
-      {onPlacementChange && renderResult ? (
-        <div
-          className="effect-transform-box"
-          onPointerDown={(event) => handlePointerDown(event, "move")}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-          style={getTransformBoxStyle(renderResult, canvasMetrics)}
-        >
-          <span
-            aria-hidden="true"
-            className="transform-handle rotate-handle"
-            onPointerDown={(event) => handlePointerDown(event, "rotate")}
+      <div className="viewport-controls" aria-label="보기 조절">
+        <button aria-label="축소" onClick={() => zoomViewport(-0.1)} type="button">
+          <Minus size={14} />
+        </button>
+        <strong>{Math.round(viewport.scale * 100)}%</strong>
+        <button aria-label="확대" onClick={() => zoomViewport(0.1)} type="button">
+          <Plus size={14} />
+        </button>
+        <button aria-label="맞춤" onClick={resetViewport} type="button">
+          <Maximize2 size={14} />
+        </button>
+        <Move size={14} aria-hidden="true" />
+      </div>
+      <div
+        ref={stageRef}
+        className="typo-effector-stage"
+        style={{
+          transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`
+        }}
+      >
+        <canvas ref={canvasRef} />
+        {onPlacementChange && renderResult ? (
+          <div
+            className="effect-transform-box"
+            onPointerDown={(event) => handlePointerDown(event, "move")}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
-          />
-          <span
-            aria-hidden="true"
-            className="transform-handle resize-handle"
-            onPointerDown={(event) => handlePointerDown(event, "resize")}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-          />
-        </div>
-      ) : null}
-      {status === "rendering" ? <span>효과 적용 중</span> : null}
-      {status === "failed" ? <span>효과를 표시하지 못했어요</span> : null}
+            style={getTransformBoxStyle(renderResult, canvasMetrics)}
+          >
+            <span
+              aria-hidden="true"
+              className="transform-handle rotate-handle"
+              onPointerDown={(event) => handlePointerDown(event, "rotate")}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+            />
+            <span
+              aria-hidden="true"
+              className="transform-handle resize-handle"
+              onPointerDown={(event) => handlePointerDown(event, "resize")}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+            />
+          </div>
+        ) : null}
+      </div>
+      {status === "rendering" ? <span className="typo-effector-status">효과 적용 중</span> : null}
+      {status === "failed" ? <span className="typo-effector-status">효과를 표시하지 못했어요</span> : null}
     </div>
   );
 }
