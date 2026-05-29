@@ -94,16 +94,7 @@ export default function WorksPage() {
     listProjects(session)
       .then((items) => {
         if (!isCancelled) {
-          setWorks(
-            items.map((item) => ({
-              id: `project:${item.project_id}`,
-              title: item.title,
-              genre: item.genre || "타이포",
-              status: item.active_job_id ? "generating" : item.status === "completed" ? "completed" : "draft",
-              href: item.version_id ? (`/create?projectId=${item.project_id}&versionId=${item.version_id}` as Route) : ("/create" as Route),
-              updatedAt: item.updated_at ?? new Date(0).toISOString()
-            }))
-          );
+          setWorks(mergeWorks(mapRemoteWorks(items), readOwnedWorks(session.user.id)));
         }
       })
       .catch(() => {
@@ -162,6 +153,33 @@ export default function WorksPage() {
   );
 }
 
+function mapRemoteWorks(
+  items: Awaited<ReturnType<typeof listProjects>>
+): WorkListItem[] {
+  return items.map((item) => ({
+    id: `project:${item.project_id}`,
+    title: item.title,
+    genre: item.genre || "타이포",
+    status: item.active_job_id ? "generating" : item.status === "completed" ? "completed" : "draft",
+    href: item.version_id ? (`/create?projectId=${item.project_id}&versionId=${item.version_id}` as Route) : ("/create" as Route),
+    updatedAt: item.updated_at ?? new Date(0).toISOString()
+  }));
+}
+
+function mergeWorks(remoteWorks: WorkListItem[], localWorks: WorkListItem[]) {
+  const seen = new Set<string>();
+  return [...remoteWorks, ...localWorks]
+    .filter((work) => {
+      const key = work.href.toString();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
 function readOwnedWorks(ownerUserId: string | null): WorkListItem[] {
   if (!ownerUserId) {
     return [];
@@ -173,7 +191,10 @@ function readOwnedWorks(ownerUserId: string | null): WorkListItem[] {
     title: work.title || "타이포 시안",
     genre: work.genre || genreNames[work.draft?.selectedGenreId ?? ""] || "타이포",
     status: "completed" as const,
-    href: `/create?workId=${encodeURIComponent(work.id)}` as Route,
+    href:
+      work.draft?.projectId && work.draft.versionId
+        ? (`/create?projectId=${work.draft.projectId}&versionId=${work.draft.versionId}` as Route)
+        : (`/create?workId=${encodeURIComponent(work.id)}` as Route),
     updatedAt: work.updatedAt ?? work.createdAt ?? new Date(0).toISOString()
   }));
 
@@ -184,7 +205,10 @@ function readOwnedWorks(ownerUserId: string | null): WorkListItem[] {
           title: draft.title?.trim() || "새 타이포 작업",
           genre: genreNames[draft.selectedGenreId ?? ""] ?? "타이포",
           status: draft.generationJobId ? ("generating" as const) : ("draft" as const),
-          href: "/create" as Route,
+          href:
+            draft.projectId && draft.versionId
+              ? (`/create?projectId=${draft.projectId}&versionId=${draft.versionId}` as Route)
+              : ("/create" as Route),
           updatedAt: draft.updatedAt ?? new Date(0).toISOString()
         }
       : null;
