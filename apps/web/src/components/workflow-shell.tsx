@@ -35,9 +35,11 @@ import {
   getJob,
   getProject,
   getProjectVersion,
+  patchProjectVersionState,
   type CreditSummaryResponse,
   claimExport,
-  type JobResponse
+  type JobResponse,
+  type ProjectVersionResponse
 } from "@/lib/api-client";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { getTypoEffectPreset, typoEffectPresets } from "@/lib/typo-effector-presets";
@@ -49,6 +51,7 @@ const draftStorageKey = "typography-forge:guest-draft:v1";
 const completedStorageKey = "typography-forge:completed:v1";
 const pollDelayMs = 1800;
 const maxPollAttempts = 90;
+const workflowSaveDebounceMs = 1500;
 const defaultCanvas: LayoutCanvas = { width: 2000, height: 1000 };
 const terminalJobStatuses = new Set(["succeeded", "partially_succeeded", "failed", "timed_out", "cancelled"]);
 const typographyGenerationPaidCost = 1;
@@ -327,6 +330,168 @@ function isSameCompletedWork(
   return record.title === title && record.genre === genre && record.presetId === presetId;
 }
 
+function buildWorkflowState(draft: GuestDraft): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    activeStepId: draft.activeStepId,
+    selectedGenreId: draft.selectedGenreId,
+    title: draft.title,
+    cover: draft.cover
+      ? {
+          name: draft.cover.name,
+          size: draft.cover.size
+        }
+      : null,
+    layout: {
+      canvas: draft.layoutCanvas,
+      items: draft.layoutItems
+    },
+    style: {
+      userPrompt: draft.stylePrompt,
+      prompt: draft.styleResolution?.prompt ?? "",
+      resolvedElements: draft.styleResolution?.display.elements ?? [],
+      resolvedStyles: draft.styleResolution?.display.style ?? [],
+      jobId: draft.styleJobId,
+      status: draft.styleJobStatus
+    },
+    generation: {
+      jobId: draft.generationJobId,
+      status: draft.generationJobStatus,
+      creditSource: draft.generationCreditSource,
+      slots: draft.generationSlots,
+      selectedCandidateId: draft.selectedCandidateId
+    },
+    effects: {
+      presetId: draft.effectPresetId,
+      params: draft.effectParams,
+      layerParams: draft.effectLayerParams,
+      placement: draft.effectPlacement
+    },
+    project: {
+      projectId: draft.projectId,
+      versionId: draft.versionId,
+      completedWorkId: draft.completedWorkId
+    }
+  };
+}
+
+function draftFromWorkflowState(
+  stateJson: Record<string, unknown> | undefined,
+  fallback: Pick<GuestDraft, "ownerUserId" | "projectId" | "versionId" | "title">
+): GuestDraft | null {
+  const state = asRecord(stateJson);
+  if (!state || state.schemaVersion !== 1) {
+    return null;
+  }
+
+  const rawStepId = typeof state.activeStepId === "string" ? state.activeStepId : defaultDraft.activeStepId;
+  const activeStepId = workflowSteps.some((step) => step.id === rawStepId)
+    ? (rawStepId as WorkflowStepId)
+    : defaultDraft.activeStepId;
+  const selectedGenreId =
+    typeof state.selectedGenreId === "string" && genres.some((genre) => genre.id === state.selectedGenreId)
+      ? state.selectedGenreId
+      : defaultDraft.selectedGenreId;
+  const rawCover = asRecord(state.cover);
+  const rawLayout = asRecord(state.layout);
+  const rawStyle = asRecord(state.style);
+  const rawGeneration = asRecord(state.generation);
+  const rawEffects = asRecord(state.effects);
+  const rawProject = asRecord(state.project);
+  const layout = readLayoutResult({
+    items: Array.isArray(rawLayout?.items) ? rawLayout.items : [],
+    canvas: rawLayout?.canvas
+  });
+  const stylePrompt = typeof rawStyle?.userPrompt === "string" ? rawStyle.userPrompt : "";
+  const styleResolution =
+    rawStyle && (rawStyle.prompt || rawStyle.resolvedElements || rawStyle.resolvedStyles)
+      ? {
+          prompt: typeof rawStyle.prompt === "string" ? rawStyle.prompt : "",
+          display: {
+            elements: readStringList(rawStyle.resolvedElements),
+            style: readStringList(rawStyle.resolvedStyles)
+          }
+        }
+      : null;
+
+  return normalizeDraft({
+    ...defaultDraft,
+    ownerUserId: fallback.ownerUserId,
+    completedWorkId: readNullableString(rawProject?.completedWorkId),
+    activeStepId,
+    selectedGenreId,
+    cover: rawCover
+      ? {
+          name: typeof rawCover.name === "string" ? rawCover.name : "cover",
+          size: toNumber(rawCover.size, 0),
+          previewDataUrl: null
+        }
+      : null,
+    title: typeof state.title === "string" ? state.title : fallback.title,
+    stylePrompt,
+    selectedCandidateId: readNullableString(rawGeneration?.selectedCandidateId) ?? "",
+    projectId: readNullableString(rawProject?.projectId) ?? fallback.projectId,
+    versionId: readNullableString(rawProject?.versionId) ?? fallback.versionId,
+    layoutJobId: null,
+    layoutJobStatus: null,
+    layoutItems: layout?.items ?? [],
+    layoutCanvas: layout?.canvas ?? null,
+    styleJobId: readNullableString(rawStyle?.jobId),
+    styleJobStatus: readNullableString(rawStyle?.status),
+    styleResolution,
+    generationJobId: readNullableString(rawGeneration?.jobId),
+    generationJobStatus: readNullableString(rawGeneration?.status),
+    generationCreditSource:
+      rawGeneration?.creditSource === "paid" ? "paid" : rawGeneration?.creditSource === "free" ? "free" : null,
+    generationSlots: readGenerationSlots({
+      slots: Array.isArray(rawGeneration?.slots) ? rawGeneration.slots : []
+    }),
+    effectPresetId: readNullableString(rawEffects?.presetId) ?? defaultDraft.effectPresetId,
+    effectParams: asRecord(rawEffects?.params) as TypoEffectParams | null,
+    effectLayerParams: asRecord(rawEffects?.layerParams) as TypoLayerParams | null,
+    effectPlacement: asRecord(rawEffects?.placement) as TypoEffectPlacement | null,
+    updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : new Date().toISOString()
+  });
+}
+
+function draftFromProjectVersion(
+  projectTitle: string,
+  version: ProjectVersionResponse,
+  ownerUserId: string
+): GuestDraft {
+  const fallbackDraft = {
+    ownerUserId,
+    projectId: String(version.project_id),
+    versionId: String(version.id),
+    title: version.title_text || projectTitle
+  };
+  const workflowDraft = draftFromWorkflowState(version.workflow_state_json, fallbackDraft);
+  if (workflowDraft) {
+    return normalizeDraft({
+      ...workflowDraft,
+      ownerUserId,
+      projectId: String(version.project_id),
+      versionId: String(version.id)
+    });
+  }
+
+  const layout = readLayoutResult(version.layout_json ?? {});
+  const styleResolution = readStyleResolution(version.style_resolved_json ?? {});
+  return normalizeDraft({
+    ...defaultDraft,
+    ownerUserId,
+    activeStepId: version.selected_candidate_id ? "effects" : layout?.items.length ? "layout" : "title",
+    title: version.title_text || projectTitle,
+    projectId: String(version.project_id),
+    versionId: String(version.id),
+    layoutItems: layout?.items ?? [],
+    layoutCanvas: layout?.canvas ?? null,
+    styleResolution,
+    selectedCandidateId: version.selected_candidate_id ? String(version.selected_candidate_id) : "",
+    updatedAt: new Date().toISOString()
+  });
+}
+
 export function WorkflowShell() {
   const [draft, setDraft] = useState<GuestDraft>(defaultDraft);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -335,7 +500,6 @@ export function WorkflowShell() {
   const [isAuthChecked, setIsAuthChecked] = useState(!supabase);
   const [pendingWorkId, setPendingWorkId] = useState<string | null>(null);
   const [pendingRemoteWork, setPendingRemoteWork] = useState<{ projectId: string; versionId: string } | null>(null);
-  const [shouldLoadSavedDraft, setShouldLoadSavedDraft] = useState(false);
   const [authState, setAuthState] = useState(isSupabaseConfigured ? "로그인 확인 중" : "로그인 준비 중");
   const [remoteState, setRemoteState] = useState("AI 작업을 시작할 수 있어요.");
   const [remoteError, setRemoteError] = useState<string | null>(null);
@@ -344,6 +508,9 @@ export function WorkflowShell() {
   const [creditSummary, setCreditSummary] = useState<CreditSummaryResponse | null>(null);
   const autoLayoutRequestKeyRef = useRef<string | null>(null);
   const resumedGenerationJobIdRef = useRef<string | null>(null);
+  const serverSaveRevisionRef = useRef<number | null>(null);
+  const lastServerSnapshotRef = useRef<string | null>(null);
+  const serverSaveTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let shouldMarkHydrated = true;
@@ -368,9 +535,9 @@ export function WorkflowShell() {
         persistJsonToBrowserStorage(draftStorageKeyFor(nextDraft.ownerUserId), draftForBrowserStorage(nextDraft));
         window.history.replaceState(null, "", "/create");
       } else {
-        setShouldLoadSavedDraft(true);
-        shouldMarkHydrated = false;
-        return;
+        const nextDraft = { ...defaultDraft, ownerUserId: session?.user.id ?? null };
+        setDraft(nextDraft);
+        persistJsonToBrowserStorage(draftStorageKeyFor(nextDraft.ownerUserId), draftForBrowserStorage(nextDraft));
       }
     } catch {
       setSaveState("임시 저장을 불러오지 못했어요");
@@ -414,21 +581,11 @@ export function WorkflowShell() {
         if (isCancelled) {
           return;
         }
-        const layout = readLayoutResult(version.layout_json ?? {});
-        const styleResolution = readStyleResolution(version.style_resolved_json ?? {});
-        setDraft({
-          ...defaultDraft,
-          ownerUserId: session.user.id,
-          activeStepId: version.selected_candidate_id ? "effects" : layout?.items.length ? "layout" : "title",
-          title: version.title_text || project.title,
-          projectId: String(project.id),
-          versionId: String(version.id),
-          layoutItems: layout?.items ?? [],
-          layoutCanvas: layout?.canvas ?? null,
-          styleResolution,
-          selectedCandidateId: version.selected_candidate_id ? String(version.selected_candidate_id) : "",
-          updatedAt: new Date().toISOString()
-        });
+        const restoredDraft = draftFromProjectVersion(project.title, version, session.user.id);
+        serverSaveRevisionRef.current = version.save_revision ?? 0;
+        lastServerSnapshotRef.current = JSON.stringify(buildWorkflowState(restoredDraft));
+        setDraft(restoredDraft);
+        setSaveState("저장됨");
         setIsHydrated(true);
       })
       .catch(() => {
@@ -442,23 +599,6 @@ export function WorkflowShell() {
       isCancelled = true;
     };
   }, [isAuthChecked, pendingRemoteWork, session]);
-
-  useEffect(() => {
-    if (!shouldLoadSavedDraft || !isAuthChecked) {
-      return;
-    }
-
-    const ownerUserId = session?.user.id ?? null;
-    try {
-      const savedDraft = window.localStorage.getItem(draftStorageKeyFor(ownerUserId));
-      if (savedDraft) {
-        setDraft(normalizeDraft({ ...JSON.parse(savedDraft), ownerUserId }));
-      }
-    } catch {
-      setSaveState("임시 저장을 불러오지 못했어요");
-    }
-    setIsHydrated(true);
-  }, [isAuthChecked, session, shouldLoadSavedDraft]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -477,6 +617,28 @@ export function WorkflowShell() {
     } else {
       setSaveState("저장 공간을 정리해주세요");
     }
+
+    if (!session || !nextDraft.projectId || !nextDraft.versionId) {
+      return;
+    }
+
+    const snapshot = JSON.stringify(buildWorkflowState(nextDraft));
+    if (snapshot === lastServerSnapshotRef.current) {
+      setSaveState("저장됨");
+      return;
+    }
+
+    setSaveState("저장 중");
+    serverSaveTimerRef.current = window.setTimeout(() => {
+      void saveDraftStateToServer(nextDraft, snapshot);
+    }, workflowSaveDebounceMs);
+
+    return () => {
+      if (serverSaveTimerRef.current !== null) {
+        window.clearTimeout(serverSaveTimerRef.current);
+        serverSaveTimerRef.current = null;
+      }
+    };
   }, [draft, isHydrated, session?.user.id]);
 
   useEffect(() => {
@@ -717,6 +879,33 @@ export function WorkflowShell() {
     setDraft((currentDraft) => ({ ...currentDraft, ...nextDraft }));
   }
 
+  async function saveDraftStateToServer(
+    draftToSave: GuestDraft,
+    snapshot = JSON.stringify(buildWorkflowState(draftToSave)),
+    activeSession = session
+  ) {
+    if (!activeSession || !draftToSave.projectId || !draftToSave.versionId) {
+      return null;
+    }
+    try {
+      const version = await patchProjectVersionState(activeSession, {
+        projectId: draftToSave.projectId,
+        versionId: draftToSave.versionId,
+        currentStep: draftToSave.activeStepId,
+        workflowStateJson: JSON.parse(snapshot) as Record<string, unknown>,
+        baseRevision: serverSaveRevisionRef.current
+      });
+      serverSaveRevisionRef.current = version.save_revision ?? serverSaveRevisionRef.current;
+      lastServerSnapshotRef.current = snapshot;
+      setSaveState("저장됨");
+      return version;
+    } catch (error) {
+      setSaveState("저장 실패");
+      setRemoteError(errorMessage(error));
+      return null;
+    }
+  }
+
   function goToStep(stepId: WorkflowStepId) {
     updateDraft({ activeStepId: stepId });
   }
@@ -729,9 +918,19 @@ export function WorkflowShell() {
     goToStep(workflowSteps[activeStepIndex - 1].id);
   }
 
-  function goNext() {
+  async function goNext() {
     if (!canGoNext) {
       return;
+    }
+
+    if (draft.activeStepId === "title" && session && draft.title.trim() && !draft.projectId && !draft.versionId) {
+      try {
+        await ensureRemoteDraft(session);
+      } catch (error) {
+        setRemoteError(errorMessage(error));
+        setRemoteState("작업 저장 실패");
+        return;
+      }
     }
 
     goToStep(workflowSteps[activeStepIndex + 1].id);
@@ -783,10 +982,15 @@ export function WorkflowShell() {
       titleText,
       genreId: null
     });
-    updateDraft({
+    const remoteReadyDraft = normalizeDraft({
+      ...draft,
       projectId: project.id,
-      versionId: version.id
+      versionId: version.id,
+      updatedAt: new Date().toISOString()
     });
+    serverSaveRevisionRef.current = version.save_revision ?? 0;
+    updateDraft(remoteReadyDraft);
+    await saveDraftStateToServer(remoteReadyDraft, undefined, activeSession);
     setRemoteState("작업 공간이 준비되었습니다.");
     return {
       projectId: project.id,
@@ -1051,7 +1255,7 @@ export function WorkflowShell() {
     });
   }
 
-  function saveCompletedWork() {
+  async function saveCompletedWork() {
     const ownerUserId = session?.user.id ?? null;
     if (!ownerUserId) {
       setSaveState("로그인 후 완료 기록을 저장할 수 있어요");
@@ -1096,9 +1300,13 @@ export function WorkflowShell() {
         throw new Error("Browser storage quota exceeded.");
       }
       setDraft(completedDraft);
+      if (session && completedDraft.projectId && completedDraft.versionId) {
+        await saveDraftStateToServer(completedDraft);
+      }
       setSaveState("완료됨");
     } catch {
       setSaveState("완료 기록을 저장하지 못했어요");
+      return;
     }
     window.location.href = "/";
   }

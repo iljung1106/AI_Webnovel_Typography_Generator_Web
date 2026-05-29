@@ -54,6 +54,15 @@ class VersionPatch(BaseModel):
     cover_placement_json: dict[str, Any] | None = None
 
 
+WorkflowStep = Literal["genre", "cover", "title", "layout", "style", "generation", "effects", "export"]
+
+
+class VersionStatePatch(BaseModel):
+    current_step: WorkflowStep
+    workflow_state_json: dict[str, Any] = Field(default_factory=dict)
+    base_revision: int | None = Field(default=None, ge=0)
+
+
 class ProjectVersionResponse(BaseModel):
     id: UUID
     project_id: UUID
@@ -67,6 +76,10 @@ class ProjectVersionResponse(BaseModel):
     selected_candidate_id: UUID | None = None
     effect_settings_json: dict[str, Any] = Field(default_factory=dict)
     cover_placement_json: dict[str, Any] = Field(default_factory=dict)
+    current_step: WorkflowStep = "genre"
+    workflow_state_json: dict[str, Any] = Field(default_factory=dict)
+    save_revision: int = 0
+    last_saved_at: datetime | None = None
     created_at: datetime | None = None
 
 

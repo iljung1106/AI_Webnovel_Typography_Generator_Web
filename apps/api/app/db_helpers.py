@@ -11,7 +11,8 @@ PROJECT_COLUMNS = "id,title,status,selected_genre_id,created_at,updated_at"
 VERSION_COLUMNS = (
     "id,project_id,version_number,genre_id,title_text,cover_asset_id,"
     "layout_json,style_input_json,style_resolved_json,selected_candidate_id,"
-    "effect_settings_json,cover_placement_json,created_at"
+    "effect_settings_json,cover_placement_json,current_step,workflow_state_json,"
+    "save_revision,last_saved_at,created_at"
 )
 JOB_COLUMNS = (
     "id,user_id,project_id,version_id,type,status,input_json,result_json,"

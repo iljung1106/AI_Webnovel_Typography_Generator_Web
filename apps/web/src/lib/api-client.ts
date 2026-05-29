@@ -39,6 +39,10 @@ export type ProjectVersionResponse = {
   };
   style_resolved_json?: Record<string, unknown>;
   selected_candidate_id?: string | null;
+  current_step?: string;
+  workflow_state_json?: Record<string, unknown>;
+  save_revision?: number;
+  last_saved_at?: string | null;
 };
 
 export type JobResponse = {
@@ -172,6 +176,27 @@ export async function createProjectVersion(
 
 export async function getProjectVersion(session: Session, projectId: string, versionId: string) {
   return requestJson<ProjectVersionResponse>(`/projects/${projectId}/versions/${versionId}`, { session });
+}
+
+export async function patchProjectVersionState(
+  session: Session,
+  input: {
+    projectId: string;
+    versionId: string;
+    currentStep: string;
+    workflowStateJson: Record<string, unknown>;
+    baseRevision?: number | null;
+  }
+) {
+  return requestJson<ProjectVersionResponse>(`/projects/${input.projectId}/versions/${input.versionId}/state`, {
+    session,
+    method: "PATCH",
+    body: {
+      current_step: input.currentStep,
+      workflow_state_json: input.workflowStateJson,
+      base_revision: input.baseRevision ?? null
+    }
+  });
 }
 
 export async function createJob(

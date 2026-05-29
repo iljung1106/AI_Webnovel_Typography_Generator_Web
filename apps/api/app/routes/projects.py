@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,12 +15,14 @@ from ..schemas import (
     UserContext,
     VersionCreate,
     VersionPatch,
+    VersionStatePatch,
     WorkListItem,
 )
 from ..security import get_current_user
 from ..supabase_client import SupabaseConfigError, SupabaseRequestError, supabase
 
 router = APIRouter()
+MAX_WORKFLOW_STATE_BYTES = 256_000
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -188,6 +192,64 @@ async def patch_project_version(
         raise supabase_http_error(exc) from exc
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project version not found.")
+    return ProjectVersionResponse(**rows[0])
+
+
+@router.patch("/{project_id}/versions/{version_id}/state", response_model=ProjectVersionResponse)
+async def patch_project_version_state(
+    project_id: UUID,
+    version_id: UUID,
+    payload: VersionStatePatch,
+    user: UserContext = Depends(get_current_user),
+) -> ProjectVersionResponse:
+    try:
+        get_owned_project(project_id, user.user_id)
+        version = get_project_version(project_id, version_id)
+        encoded_state = json.dumps(payload.workflow_state_json, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        if len(encoded_state) > MAX_WORKFLOW_STATE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Workflow state is too large.",
+            )
+        if payload.base_revision is not None and payload.base_revision != version.get("save_revision", 0):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Workflow state has changed. Please reload the latest version.",
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+        next_revision = int(version.get("save_revision") or 0) + 1
+        rows = supabase.update(
+            "project_versions",
+            {
+                "select": VERSION_COLUMNS,
+                "id": f"eq.{version_id}",
+                "project_id": f"eq.{project_id}",
+                "save_revision": f"eq.{version.get('save_revision', 0)}",
+            },
+            {
+                "current_step": payload.current_step,
+                "workflow_state_json": payload.workflow_state_json,
+                "save_revision": next_revision,
+                "last_saved_at": now,
+            },
+        )
+        if not rows:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Workflow state has changed. Please reload the latest version.",
+            )
+        supabase.update(
+            "projects",
+            {"id": f"eq.{project_id}", "user_id": f"eq.{user.user_id}"},
+            {"updated_at": now},
+        )
+    except HTTPException:
+        raise
+    except (SupabaseConfigError, SupabaseRequestError) as exc:
+        raise supabase_http_error(exc) from exc
     return ProjectVersionResponse(**rows[0])
 
 
