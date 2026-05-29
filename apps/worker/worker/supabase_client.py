@@ -79,6 +79,41 @@ class SupabaseRestClient:
     def patch_project_version(self, version_id: str, payload: dict[str, Any]) -> None:
         self.patch_rows("project_versions", filters={"id": f"eq.{version_id}"}, payload=payload)
 
+    def merge_project_version_workflow_state(
+        self,
+        version_id: str,
+        *,
+        current_step: str,
+        state_patch: dict[str, Any],
+    ) -> None:
+        rows = self.get_rows(
+            "project_versions",
+            params={
+                "select": "workflow_state_json,save_revision",
+                "id": f"eq.{version_id}",
+                "limit": "1",
+            },
+        )
+        if not rows:
+            return
+        current_state = rows[0].get("workflow_state_json") or {}
+        if not isinstance(current_state, dict):
+            current_state = {}
+        next_state = _deep_merge_dicts(current_state, state_patch)
+        next_state.setdefault("schemaVersion", 1)
+        next_state.setdefault("activeStepId", current_step)
+        next_revision = int(rows[0].get("save_revision") or 0) + 1
+        self.patch_rows(
+            "project_versions",
+            filters={"id": f"eq.{version_id}"},
+            payload={
+                "current_step": current_step,
+                "workflow_state_json": next_state,
+                "save_revision": next_revision,
+                "last_saved_at": utc_now_iso(),
+            },
+        )
+
     def get_generation_batch_for_job(self, job_id: str) -> dict[str, Any] | None:
         rows = self.get_rows(
             "generation_batches",
@@ -348,3 +383,13 @@ class SupabaseRestClient:
                 return image.size
         except Exception:
             return None, None
+
+
+def _deep_merge_dicts(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged

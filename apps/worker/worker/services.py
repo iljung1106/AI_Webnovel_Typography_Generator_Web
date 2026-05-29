@@ -34,6 +34,26 @@ class LayoutGenerationService:
         result = {"items": items, "canvas": CANVAS}
         if job.version_id:
             self.context.db.patch_project_version(job.version_id, {"layout_json": result})
+            self.context.db.merge_project_version_workflow_state(
+                job.version_id,
+                current_step="layout",
+                state_patch={
+                    "layout": result,
+                    "style": {
+                        "jobId": None,
+                        "status": None,
+                        "prompt": "",
+                        "resolvedElements": [],
+                        "resolvedStyles": [],
+                    },
+                    "generation": {
+                        "jobId": None,
+                        "status": None,
+                        "slots": [],
+                        "selectedCandidateId": "",
+                    },
+                },
+            )
         return HandlerResult(status="succeeded", result_json=result)
 
 
@@ -74,6 +94,26 @@ class StyleResolutionService:
                 {
                     "style_input_json": job.input_json,
                     "style_resolved_json": result,
+                },
+            )
+            self.context.db.merge_project_version_workflow_state(
+                job.version_id,
+                current_step="style",
+                state_patch={
+                    "style": {
+                        "userPrompt": ", ".join(keywords),
+                        "prompt": prompt,
+                        "resolvedElements": element_terms,
+                        "resolvedStyles": style_terms,
+                        "jobId": job.id,
+                        "status": "succeeded",
+                    },
+                    "generation": {
+                        "jobId": None,
+                        "status": None,
+                        "slots": [],
+                        "selectedCandidateId": "",
+                    },
                 },
             )
         return HandlerResult(status="succeeded", result_json=result)
@@ -164,6 +204,23 @@ class TypographyGenerationService:
                 "finished_at": utc_now_iso(),
             },
         )
+        if job.version_id:
+            self.context.db.patch_project_version(
+                job.version_id,
+                {"status": "generated" if succeeded_count > 0 else "failed"},
+            )
+            self.context.db.merge_project_version_workflow_state(
+                job.version_id,
+                current_step="generation",
+                state_patch={
+                    "generation": {
+                        "jobId": job.id,
+                        "status": job_status,
+                        "creditSource": str(job.input_json.get("credit_source") or "free"),
+                        "slots": slot_results,
+                    },
+                },
+            )
         return HandlerResult(
             status=job_status,
             result_json={

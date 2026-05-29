@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -58,6 +59,63 @@ async def create_job(
         if payload.type == "typography_generation":
             job = _create_generation_batch(job, payload, user.user_id)
             _mark_version_status(payload.version_id, "generating")
+            _merge_version_workflow_state(
+                payload.version_id,
+                current_step="generation",
+                state_patch={
+                    "generation": {
+                        "jobId": job["id"],
+                        "status": job["status"],
+                        "creditSource": str(payload.input_json.get("credit_source") or "free"),
+                        "slots": (job.get("result_json") or {}).get("slots", []),
+                        "selectedCandidateId": "",
+                    },
+                },
+            )
+        elif payload.type == "layout_generation":
+            _merge_version_workflow_state(
+                payload.version_id,
+                current_step="layout",
+                state_patch={
+                    "layout": {
+                        "jobId": job["id"],
+                        "status": job["status"],
+                        "items": [],
+                        "canvas": None,
+                    },
+                    "style": {
+                        "jobId": None,
+                        "status": None,
+                        "prompt": "",
+                        "resolvedElements": [],
+                        "resolvedStyles": [],
+                    },
+                    "generation": {
+                        "jobId": None,
+                        "status": None,
+                        "slots": [],
+                        "selectedCandidateId": "",
+                    },
+                },
+            )
+        elif payload.type == "style_resolution":
+            _merge_version_workflow_state(
+                payload.version_id,
+                current_step="style",
+                state_patch={
+                    "style": {
+                        "userPrompt": ", ".join(str(item) for item in payload.input_json.get("keywords", [])),
+                        "jobId": job["id"],
+                        "status": job["status"],
+                    },
+                    "generation": {
+                        "jobId": None,
+                        "status": None,
+                        "slots": [],
+                        "selectedCandidateId": "",
+                    },
+                },
+            )
     except HTTPException:
         raise
     except (SupabaseConfigError, SupabaseRequestError) as exc:
@@ -318,6 +376,50 @@ def _mark_version_status(version_id: UUID, version_status: str) -> None:
         supabase.update("project_versions", {"id": f"eq.{version_id}"}, {"status": version_status})
     except (SupabaseConfigError, SupabaseRequestError):
         return
+
+
+def _merge_version_workflow_state(
+    version_id: UUID,
+    *,
+    current_step: str,
+    state_patch: dict[str, Any],
+) -> None:
+    rows = supabase.select(
+        "project_versions",
+        {
+            "select": "workflow_state_json,save_revision",
+            "id": f"eq.{version_id}",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        return
+    current_state = rows[0].get("workflow_state_json") or {}
+    if not isinstance(current_state, dict):
+        current_state = {}
+    next_state = _deep_merge_dicts(current_state, state_patch)
+    next_state.setdefault("schemaVersion", 1)
+    next_state.setdefault("activeStepId", current_step)
+    supabase.update(
+        "project_versions",
+        {"id": f"eq.{version_id}"},
+        {
+            "current_step": current_step,
+            "workflow_state_json": next_state,
+            "save_revision": int(rows[0].get("save_revision") or 0) + 1,
+            "last_saved_at": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
+        },
+    )
+
+
+def _deep_merge_dicts(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _job_idempotency_key(payload: JobCreate) -> str:

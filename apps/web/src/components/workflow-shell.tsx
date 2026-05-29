@@ -344,7 +344,9 @@ function buildWorkflowState(draft: GuestDraft): Record<string, unknown> {
       : null,
     layout: {
       canvas: draft.layoutCanvas,
-      items: draft.layoutItems
+      items: draft.layoutItems,
+      jobId: draft.layoutJobId,
+      status: draft.layoutJobStatus
     },
     style: {
       userPrompt: draft.stylePrompt,
@@ -432,10 +434,10 @@ function draftFromWorkflowState(
     selectedCandidateId: readNullableString(rawGeneration?.selectedCandidateId) ?? "",
     projectId: readNullableString(rawProject?.projectId) ?? fallback.projectId,
     versionId: readNullableString(rawProject?.versionId) ?? fallback.versionId,
-    layoutJobId: null,
-    layoutJobStatus: null,
     layoutItems: layout?.items ?? [],
     layoutCanvas: layout?.canvas ?? null,
+    layoutJobId: readNullableString(rawLayout?.jobId),
+    layoutJobStatus: readNullableString(rawLayout?.status),
     styleJobId: readNullableString(rawStyle?.jobId),
     styleJobStatus: readNullableString(rawStyle?.status),
     styleResolution,
@@ -612,13 +614,15 @@ export function WorkflowShell() {
       updatedAt: new Date().toISOString()
     };
 
-    if (persistJsonToBrowserStorage(draftStorageKeyFor(ownerUserId), draftForBrowserStorage(nextDraft))) {
-      setSaveState("임시 저장됨");
-    } else {
+    const browserSaveOk = persistJsonToBrowserStorage(draftStorageKeyFor(ownerUserId), draftForBrowserStorage(nextDraft));
+    if (!browserSaveOk) {
       setSaveState("저장 공간을 정리해주세요");
     }
 
     if (!session || !nextDraft.projectId || !nextDraft.versionId) {
+      if (browserSaveOk) {
+        setSaveState("임시 저장됨");
+      }
       return;
     }
 
@@ -893,7 +897,7 @@ export function WorkflowShell() {
         versionId: draftToSave.versionId,
         currentStep: draftToSave.activeStepId,
         workflowStateJson: JSON.parse(snapshot) as Record<string, unknown>,
-        baseRevision: serverSaveRevisionRef.current
+        baseRevision: null
       });
       serverSaveRevisionRef.current = version.save_revision ?? serverSaveRevisionRef.current;
       lastServerSnapshotRef.current = snapshot;
@@ -915,7 +919,15 @@ export function WorkflowShell() {
       return;
     }
 
-    goToStep(workflowSteps[activeStepIndex - 1].id);
+    const nextDraft = normalizeDraft({
+      ...draft,
+      activeStepId: workflowSteps[activeStepIndex - 1].id,
+      updatedAt: new Date().toISOString()
+    });
+    setDraft(nextDraft);
+    if (session && nextDraft.projectId && nextDraft.versionId) {
+      void saveDraftStateToServer(nextDraft);
+    }
   }
 
   async function goNext() {
@@ -923,9 +935,13 @@ export function WorkflowShell() {
       return;
     }
 
+    let remoteIds = {
+      projectId: draft.projectId,
+      versionId: draft.versionId
+    };
     if (draft.activeStepId === "title" && session && draft.title.trim() && !draft.projectId && !draft.versionId) {
       try {
-        await ensureRemoteDraft(session);
+        remoteIds = await ensureRemoteDraft(session);
       } catch (error) {
         setRemoteError(errorMessage(error));
         setRemoteState("작업 저장 실패");
@@ -933,7 +949,16 @@ export function WorkflowShell() {
       }
     }
 
-    goToStep(workflowSteps[activeStepIndex + 1].id);
+    const nextDraft = normalizeDraft({
+      ...draft,
+      ...remoteIds,
+      activeStepId: workflowSteps[activeStepIndex + 1].id,
+      updatedAt: new Date().toISOString()
+    });
+    setDraft(nextDraft);
+    if (session && nextDraft.projectId && nextDraft.versionId) {
+      void saveDraftStateToServer(nextDraft);
+    }
   }
 
   async function signInWithGoogle() {
@@ -1023,13 +1048,19 @@ export function WorkflowShell() {
           title: titleText
         }
       });
-      updateDraft({
+      const nextDraft = normalizeDraft({
+        ...draft,
+        projectId: remoteDraft.projectId,
+        versionId: remoteDraft.versionId,
         activeStepId: "layout",
         layoutJobId: job.id,
         layoutJobStatus: job.status,
         layoutItems: [],
-        layoutCanvas: null
+        layoutCanvas: null,
+        updatedAt: new Date().toISOString()
       });
+      setDraft(nextDraft);
+      await saveDraftStateToServer(nextDraft);
       const finalJob = await pollJob(session, job.id, (nextJob) => {
         applyLayoutJob(nextJob);
         setRemoteState(jobStatusMessage("배치", nextJob.status));
@@ -1084,11 +1115,17 @@ export function WorkflowShell() {
           keep_original_text_visible: true
         }
       });
-      updateDraft({
+      const nextDraft = normalizeDraft({
+        ...draft,
+        projectId: remoteDraft.projectId,
+        versionId: remoteDraft.versionId,
         styleJobId: job.id,
         styleJobStatus: job.status,
-        styleResolution: null
+        styleResolution: null,
+        updatedAt: new Date().toISOString()
       });
+      setDraft(nextDraft);
+      await saveDraftStateToServer(nextDraft);
       const finalJob = await pollJob(session, job.id, (nextJob) => {
         applyStyleJob(nextJob);
         setRemoteState(jobStatusMessage("스타일", nextJob.status));
@@ -1158,13 +1195,19 @@ export function WorkflowShell() {
           sample_count: 3
         }
       });
-      updateDraft({
+      const nextDraft = normalizeDraft({
+        ...draft,
+        projectId: remoteDraft.projectId,
+        versionId: remoteDraft.versionId,
         generationJobId: job.id,
         generationJobStatus: job.status,
         generationCreditSource: readGenerationCreditSource(job.result_json) ?? creditSource,
         generationSlots: readGenerationSlots(job.result_json),
-        selectedCandidateId: ""
+        selectedCandidateId: "",
+        updatedAt: new Date().toISOString()
       });
+      setDraft(nextDraft);
+      await saveDraftStateToServer(nextDraft);
       await refreshCreditSummary(session, setCreditSummary);
       const finalJob = await pollJob(session, job.id, (nextJob) => {
         applyGenerationJob(nextJob);
@@ -1253,6 +1296,19 @@ export function WorkflowShell() {
       delete nextUrls[assetId];
       return nextUrls;
     });
+  }
+
+  function handleSelectCandidate(selectedCandidateId: string) {
+    const nextDraft = normalizeDraft({
+      ...draft,
+      selectedCandidateId,
+      effectPlacement: null,
+      updatedAt: new Date().toISOString()
+    });
+    setDraft(nextDraft);
+    if (session && nextDraft.projectId && nextDraft.versionId) {
+      void saveDraftStateToServer(nextDraft);
+    }
   }
 
   async function saveCompletedWork() {
@@ -1480,7 +1536,7 @@ export function WorkflowShell() {
                 isSignedIn={Boolean(session)}
                 onAssetImageError={handleAssetImageError}
                 onRequestAi={requestGenerationJob}
-                onSelectCandidate={(selectedCandidateId) => updateDraft({ selectedCandidateId, effectPlacement: null })}
+                onSelectCandidate={handleSelectCandidate}
                 selectedCandidateId={draft.selectedCandidateId}
               />
             ) : null}
