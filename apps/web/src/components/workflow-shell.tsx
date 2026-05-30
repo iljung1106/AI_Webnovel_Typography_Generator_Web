@@ -32,8 +32,7 @@ import {
   getActiveJob,
   getAssetSignedUrl,
   getJob,
-  getProject,
-  getProjectVersion,
+  getProjectVersionRestore,
   patchProjectVersionState,
   type CreditSummaryResponse,
   claimExport,
@@ -591,11 +590,8 @@ export function WorkflowShell() {
       return;
     }
     let isCancelled = false;
-    Promise.all([
-      getProject(session, pendingRemoteWork.projectId),
-      getProjectVersion(session, pendingRemoteWork.projectId, pendingRemoteWork.versionId)
-    ])
-      .then(([project, version]) => {
+    getProjectVersionRestore(session, pendingRemoteWork.projectId, pendingRemoteWork.versionId)
+      .then(({ project, version }) => {
         if (isCancelled) {
           return;
         }

@@ -12,6 +12,7 @@ from ..schemas import (
     ProjectCreate,
     ProjectResponse,
     ProjectVersionResponse,
+    ProjectVersionRestoreResponse,
     UserContext,
     VersionCreate,
     VersionPatch,
@@ -55,46 +56,16 @@ async def list_projects(
     user: UserContext = Depends(get_current_user),
 ) -> list[WorkListItem]:
     try:
-        project_rows = supabase.select(
-            "projects",
+        rows = supabase.rpc(
+            "list_user_work_items",
             {
-                "select": "id,title,status,selected_genre_id,updated_at",
-                "user_id": f"eq.{user.user_id}",
-                "status": "neq.deleted",
-                "order": "updated_at.desc",
-                "limit": "40",
+                "p_user_id": str(user.user_id),
+                "p_limit": 40,
             },
-        )
-        items: list[WorkListItem] = []
-        for project in project_rows:
-            version = _latest_version(project["id"])
-            active_job = _active_generation_job(project["id"], version["id"] if version else None, user.user_id)
-            thumbnail_asset_id = None
-            if version:
-                thumbnail_asset_id = version.get("selected_candidate_id") or version.get("cover_asset_id")
-            title = project.get("title") or (version.get("title_text") if version else "") or "타이포 작업"
-            status_value = project.get("status", "draft")
-            if active_job:
-                status_value = "generating"
-            elif version and version.get("current_step") == "export":
-                status_value = "completed"
-            items.append(
-                WorkListItem(
-                    project_id=project["id"],
-                    version_id=version["id"] if version else None,
-                    title=title,
-                    genre=None,
-                    status=status_value,
-                    thumbnail_asset_id=thumbnail_asset_id,
-                    thumbnail_expired=False,
-                    active_job_id=active_job["id"] if active_job else None,
-                    updated_at=project.get("updated_at"),
-                    completed_at=None,
-                )
-            )
+        ) or []
     except (SupabaseConfigError, SupabaseRequestError) as exc:
         raise supabase_http_error(exc) from exc
-    return items
+    return [WorkListItem(**row) for row in rows]
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -286,6 +257,34 @@ async def get_project_version_route(
     return _version_response(version)
 
 
+@router.get("/{project_id}/versions/{version_id}/restore", response_model=ProjectVersionRestoreResponse)
+async def get_project_version_restore_route(
+    project_id: UUID,
+    version_id: UUID,
+    user: UserContext = Depends(get_current_user),
+) -> ProjectVersionRestoreResponse:
+    try:
+        rows = supabase.rpc(
+            "get_project_version_restore",
+            {
+                "p_user_id": str(user.user_id),
+                "p_project_id": str(project_id),
+                "p_version_id": str(version_id),
+            },
+        ) or []
+    except (SupabaseConfigError, SupabaseRequestError) as exc:
+        raise supabase_http_error(exc) from exc
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project version not found.")
+    row = rows[0]
+    project = row.get("project_json") or {}
+    version = row.get("version_json") or {}
+    return ProjectVersionRestoreResponse(
+        project=ProjectResponse(**project),
+        version=_version_response(version),
+    )
+
+
 def _version_response(version: dict) -> ProjectVersionResponse:
     current_step = str(version.get("current_step") or "genre")
     return ProjectVersionResponse(
@@ -295,35 +294,3 @@ def _version_response(version: dict) -> ProjectVersionResponse:
             "workflow_state_json": normalize_workflow_state(version.get("workflow_state_json"), current_step),
         }
     )
-
-
-def _latest_version(project_id: str) -> dict | None:
-    rows = supabase.select(
-        "project_versions",
-        {
-            "select": VERSION_COLUMNS,
-            "project_id": f"eq.{project_id}",
-            "order": "version_number.desc",
-            "limit": "1",
-        },
-    )
-    return rows[0] if rows else None
-
-
-def _active_generation_job(project_id: str, version_id: str | None, user_id: UUID) -> dict | None:
-    if not version_id:
-        return None
-    rows = supabase.select(
-        "jobs",
-        {
-            "select": "id,status",
-            "user_id": f"eq.{user_id}",
-            "project_id": f"eq.{project_id}",
-            "version_id": f"eq.{version_id}",
-            "type": "eq.typography_generation",
-            "status": "in.(queued,running)",
-            "order": "created_at.desc",
-            "limit": "1",
-        },
-    )
-    return rows[0] if rows else None

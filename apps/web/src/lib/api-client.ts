@@ -45,6 +45,11 @@ export type ProjectVersionResponse = {
   last_saved_at?: string | null;
 };
 
+export type ProjectVersionRestoreResponse = {
+  project: ProjectResponse;
+  version: ProjectVersionResponse;
+};
+
 export type JobResponse = {
   id: string;
   project_id: string;
@@ -176,6 +181,10 @@ export async function createProjectVersion(
 
 export async function getProjectVersion(session: Session, projectId: string, versionId: string) {
   return requestJson<ProjectVersionResponse>(`/projects/${projectId}/versions/${versionId}`, { session });
+}
+
+export async function getProjectVersionRestore(session: Session, projectId: string, versionId: string) {
+  return requestJson<ProjectVersionRestoreResponse>(`/projects/${projectId}/versions/${versionId}/restore`, { session });
 }
 
 export async function patchProjectVersionState(

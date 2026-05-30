@@ -18,6 +18,10 @@ class Settings:
         os.environ.get("SUPABASE_REQUEST_TIMEOUT_SECONDS", "30")
     )
     job_poll_interval_seconds: float = float(os.environ.get("JOB_POLL_INTERVAL_SECONDS", "2"))
+    job_poll_idle_min_seconds: float = float(
+        os.environ.get("JOB_POLL_IDLE_MIN_SECONDS", os.environ.get("JOB_POLL_INTERVAL_SECONDS", "2"))
+    )
+    job_poll_idle_max_seconds: float = float(os.environ.get("JOB_POLL_IDLE_MAX_SECONDS", "15"))
     generation_batch_timeout_seconds: float = float(
         os.environ.get("GENERATION_BATCH_TIMEOUT_SECONDS", "300")
     )

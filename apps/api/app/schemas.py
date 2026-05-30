@@ -83,6 +83,11 @@ class ProjectVersionResponse(BaseModel):
     created_at: datetime | None = None
 
 
+class ProjectVersionRestoreResponse(BaseModel):
+    project: ProjectResponse
+    version: ProjectVersionResponse
+
+
 JobType = Literal[
     "cover_analysis",
     "layout_generation",

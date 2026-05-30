@@ -40,9 +40,17 @@ def poll_once() -> bool:
 
 def run_forever() -> None:
     logger.info("worker starting env=%s", settings.app_env)
+    idle_delay = max(settings.job_poll_idle_min_seconds, 0.1)
+    max_idle_delay = max(settings.job_poll_idle_max_seconds, idle_delay)
     while True:
-        poll_once()
-        time.sleep(settings.job_poll_interval_seconds)
+        claimed_job = poll_once()
+        if claimed_job:
+            idle_delay = max(settings.job_poll_idle_min_seconds, 0.1)
+            time.sleep(idle_delay)
+            continue
+
+        time.sleep(idle_delay)
+        idle_delay = min(max_idle_delay, max(idle_delay * 2, settings.job_poll_idle_min_seconds))
 
 
 if __name__ == "__main__":
