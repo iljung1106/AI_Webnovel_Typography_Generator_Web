@@ -5,7 +5,8 @@ import type { Route } from "next";
 import { ArrowLeft, Clock3, PenLine, Sparkles } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
-import { listProjects } from "@/lib/api-client";
+import { type WorkListItemResponse } from "@/lib/api-client";
+import { fetchAndCacheWorkList, readCachedWorkList } from "@/lib/read-model-cache";
 import { supabase } from "@/lib/supabase";
 
 type WorkListItem = {
@@ -21,6 +22,9 @@ export default function WorksPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthChecked, setIsAuthChecked] = useState(!supabase);
   const [works, setWorks] = useState<WorkListItem[]>([]);
+  const [isLoadingWorks, setIsLoadingWorks] = useState(false);
+  const [workLoadFailed, setWorkLoadFailed] = useState(false);
+  const [loadNonce, setLoadNonce] = useState(0);
 
   useEffect(() => {
     if (!supabase) {
@@ -54,24 +58,38 @@ export default function WorksPage() {
     }
     if (!session) {
       setWorks([]);
+      setIsLoadingWorks(false);
+      setWorkLoadFailed(false);
       return;
     }
     let isCancelled = false;
-    listProjects(session)
+    const cachedItems = readCachedWorkList(session.user.id);
+    if (cachedItems) {
+      setWorks(mapRemoteWorks(cachedItems));
+    }
+    setIsLoadingWorks(true);
+    setWorkLoadFailed(false);
+    fetchAndCacheWorkList(session)
       .then((items) => {
         if (!isCancelled) {
           setWorks(mapRemoteWorks(items));
+          setWorkLoadFailed(false);
         }
       })
       .catch(() => {
         if (!isCancelled) {
-          setWorks([]);
+          setWorkLoadFailed(true);
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoadingWorks(false);
         }
       });
     return () => {
       isCancelled = true;
     };
-  }, [isAuthChecked, session]);
+  }, [isAuthChecked, loadNonce, session]);
 
   return (
     <main className="utility-page">
@@ -105,6 +123,15 @@ export default function WorksPage() {
               </Link>
             ))}
           </section>
+        ) : isLoadingWorks ? (
+          <WorkListSkeleton />
+        ) : workLoadFailed ? (
+          <section className="empty-work-list">
+            <strong>작업을 불러오지 못했어요</strong>
+            <button className="button primary" onClick={() => setLoadNonce((value) => value + 1)} type="button">
+              다시 시도
+            </button>
+          </section>
         ) : (
           <section className="empty-work-list">
             <strong>{session ? "저장된 작업이 없습니다" : "로그인 후 확인할 수 있습니다"}</strong>
@@ -120,7 +147,7 @@ export default function WorksPage() {
 }
 
 function mapRemoteWorks(
-  items: Awaited<ReturnType<typeof listProjects>>
+  items: WorkListItemResponse[]
 ): WorkListItem[] {
   return items.map((item) => ({
     id: `project:${item.project_id}`,
@@ -130,6 +157,21 @@ function mapRemoteWorks(
     href: item.version_id ? (`/create?projectId=${item.project_id}&versionId=${item.version_id}` as Route) : ("/create" as Route),
     updatedAt: item.updated_at ?? new Date(0).toISOString()
   }));
+}
+
+function WorkListSkeleton() {
+  return (
+    <section className="work-list" aria-label="작업을 불러오는 중">
+      {[0, 1, 2, 3, 4, 5].map((item) => (
+        <article className="work-card skeleton-card" key={item}>
+          <span className="skeleton-pill" />
+          <strong className="skeleton-line wide" />
+          <span className="skeleton-line medium" />
+          <span className="skeleton-line short" />
+        </article>
+      ))}
+    </section>
+  );
 }
 
 function formatDate(value: string) {

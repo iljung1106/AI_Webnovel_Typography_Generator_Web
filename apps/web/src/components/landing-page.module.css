@@ -270,6 +270,12 @@
   text-decoration: none;
 }
 
+.sectionHeader span {
+  color: #9aa1ad;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .recentGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -320,6 +326,56 @@
 .recentCard span {
   color: #6e7480;
   font-size: 13px;
+}
+
+.recentEmpty {
+  display: grid;
+  min-height: 118px;
+  place-items: center;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #6e7480;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.recentSkeleton {
+  pointer-events: none;
+}
+
+.recentSkeleton span,
+.recentSkeleton strong {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #edf0f4 0%, #f8fafc 42%, #edf0f4 84%);
+  background-size: 220% 100%;
+  animation: skeletonPulse 1.2s ease-in-out infinite;
+}
+
+.recentSkeleton span:first-child {
+  width: 86px;
+  height: 24px;
+}
+
+.recentSkeleton strong {
+  width: 68%;
+  height: 20px;
+}
+
+.recentSkeleton span:last-child {
+  width: 42%;
+  height: 14px;
+}
+
+@keyframes skeletonPulse {
+  0% {
+    background-position: 160% 0;
+  }
+
+  100% {
+    background-position: -60% 0;
+  }
 }
 
 .boardHeader {

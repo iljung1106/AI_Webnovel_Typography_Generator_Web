@@ -5,7 +5,8 @@ import type { Route } from "next";
 import type { Session } from "@supabase/supabase-js";
 import { ArrowRight, Clock3, LogIn, LogOut, PenLine, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
-import { listProjects } from "@/lib/api-client";
+import { type WorkListItemResponse } from "@/lib/api-client";
+import { clearCachedReadModels, fetchAndCacheWorkList, readCachedWorkList } from "@/lib/read-model-cache";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import styles from "./landing-page.module.css";
 
@@ -28,6 +29,8 @@ export function LandingPage({ createHref = defaultCreateHref }: LandingPageProps
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthChecked, setIsAuthChecked] = useState(!supabase);
   const [works, setWorks] = useState<WorkListItem[]>([]);
+  const [isWorkLoading, setIsWorkLoading] = useState(false);
+  const [workLoadFailed, setWorkLoadFailed] = useState(false);
 
   useEffect(() => {
     if (!isAuthChecked) {
@@ -36,21 +39,35 @@ export function LandingPage({ createHref = defaultCreateHref }: LandingPageProps
 
     if (!session) {
       setWorks([]);
+      setIsWorkLoading(false);
+      setWorkLoadFailed(false);
       return;
     }
 
     const activeSession = session;
     let isCancelled = false;
     function refreshWorks() {
-      listProjects(activeSession)
+      const cachedItems = readCachedWorkList(activeSession.user.id);
+      if (cachedItems && !isCancelled) {
+        setWorks(mapRemoteWorks(cachedItems).slice(0, 6));
+      }
+      setIsWorkLoading(true);
+      setWorkLoadFailed(false);
+      fetchAndCacheWorkList(activeSession)
         .then((items) => {
           if (!isCancelled) {
             setWorks(mapRemoteWorks(items).slice(0, 6));
+            setWorkLoadFailed(false);
           }
         })
         .catch(() => {
           if (!isCancelled) {
-            setWorks([]);
+            setWorkLoadFailed(true);
+          }
+        })
+        .finally(() => {
+          if (!isCancelled) {
+            setIsWorkLoading(false);
           }
         });
     }
@@ -105,6 +122,7 @@ export function LandingPage({ createHref = defaultCreateHref }: LandingPageProps
   }
 
   async function signOut() {
+    clearCachedReadModels(session?.user.id);
     await supabase?.auth.signOut();
   }
 
@@ -156,31 +174,51 @@ export function LandingPage({ createHref = defaultCreateHref }: LandingPageProps
         </div>
       </section>
 
-      {isAuthChecked && works.length ? (
+      {isAuthChecked && session && (works.length || isWorkLoading || workLoadFailed) ? (
         <section className={styles.recentSection} aria-labelledby="recent-title">
           <div className={styles.sectionHeader}>
             <h2 id="recent-title">내 작업</h2>
-            <Link href={createHref}>새로 만들기</Link>
+            <span>{isWorkLoading ? "최근 작업을 확인하는 중" : <Link href={createHref}>새로 만들기</Link>}</span>
           </div>
-          <div className={styles.recentGrid}>
-            {works.map((work) => (
-              <Link className={styles.recentCard} href={work.href} key={work.id}>
-                <span className={styles.statusPill}>
-                  {work.status === "completed" ? <Sparkles size={13} /> : <Clock3 size={13} />}
-                  {work.status === "completed" ? "완료" : work.status === "generating" ? "생성 중" : "작성 중"}
-                </span>
-                <strong>{work.title}</strong>
-                <span>{work.genre}</span>
-              </Link>
-            ))}
-          </div>
+          {works.length ? (
+            <div className={styles.recentGrid}>
+              {works.map((work) => (
+                <Link className={styles.recentCard} href={work.href} key={work.id}>
+                  <span className={styles.statusPill}>
+                    {work.status === "completed" ? <Sparkles size={13} /> : <Clock3 size={13} />}
+                    {work.status === "completed" ? "완료" : work.status === "generating" ? "생성 중" : "작성 중"}
+                  </span>
+                  <strong>{work.title}</strong>
+                  <span>{work.genre}</span>
+                </Link>
+              ))}
+            </div>
+          ) : workLoadFailed ? (
+            <div className={styles.recentEmpty}>작업을 불러오지 못했어요</div>
+          ) : (
+            <RecentSkeletonGrid />
+          )}
         </section>
       ) : null}
     </main>
   );
 }
 
-function mapRemoteWorks(items: Awaited<ReturnType<typeof listProjects>>): WorkListItem[] {
+function RecentSkeletonGrid() {
+  return (
+    <div className={styles.recentGrid} aria-label="최근 작업을 확인하는 중">
+      {[0, 1, 2].map((item) => (
+        <div className={`${styles.recentCard} ${styles.recentSkeleton}`} key={item}>
+          <span />
+          <strong />
+          <span />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function mapRemoteWorks(items: WorkListItemResponse[]): WorkListItem[] {
   return items.map((item) => ({
     id: `project:${item.project_id}`,
     title: item.title || "타이포 작업",

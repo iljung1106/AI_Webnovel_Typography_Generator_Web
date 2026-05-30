@@ -31,7 +31,6 @@ import {
   createProjectVersion,
   getActiveJob,
   getAssetSignedUrl,
-  getCreditSummary,
   getJob,
   getProject,
   getProjectVersion,
@@ -42,6 +41,7 @@ import {
   type ProjectVersionResponse
 } from "@/lib/api-client";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { clearCachedReadModels, fetchAndCacheCreditSummary, readCachedCreditSummary } from "@/lib/read-model-cache";
 import { getTypoEffectPreset, typoEffectPresets } from "@/lib/typo-effector-presets";
 import { effectPresets, paramSchema } from "@/lib/typo-effector/effects";
 import { exportTypoLayerZip, downloadTypoEffectPng, type TypoEffectParams, type TypoEffectPlacement, type TypoLayerParams } from "@/lib/typo-effector/render";
@@ -760,7 +760,12 @@ export function WorkflowShell() {
 
   useEffect(() => {
     if (!session) {
+      setCreditSummary(null);
       return;
+    }
+    const cachedSummary = readCachedCreditSummary(session.user.id);
+    if (cachedSummary) {
+      setCreditSummary(cachedSummary);
     }
     let isCancelled = false;
     refreshCreditSummary(session, (summary) => {
@@ -903,9 +908,16 @@ export function WorkflowShell() {
   const freeGenerationCredits = creditSummary?.free_generation_remaining ?? null;
   const paidCredits = creditSummary?.paid_credit_balance ?? 0;
 
-  const canGoBack = activeStepIndex > 0;
-  const canGoNext = activeStepIndex < workflowSteps.length - 1 && canAdvanceFromStep(draft) && !isStepTransitionBusy;
+  const canGoBack = isHydrated && activeStepIndex > 0;
+  const canGoNext = isHydrated && activeStepIndex < workflowSteps.length - 1 && canAdvanceFromStep(draft) && !isStepTransitionBusy;
   const stepMeta = useMemo(() => getStepMeta(draft.activeStepId), [draft.activeStepId]);
+  const displayStepMeta = isHydrated
+    ? stepMeta
+    : {
+        kicker: "",
+        title: "작업을 불러오는 중",
+        lead: "저장된 작업 상태를 확인하고 있습니다."
+      };
 
   function updateDraft(nextDraft: Partial<GuestDraft>) {
     setDraft((currentDraft) => ({ ...currentDraft, ...nextDraft }));
@@ -1016,6 +1028,7 @@ export function WorkflowShell() {
     }
 
     setRemoteError(null);
+    clearCachedReadModels(session?.user.id);
     await supabase.auth.signOut();
     setRemoteState("로그아웃됨");
   }
@@ -1454,20 +1467,20 @@ export function WorkflowShell() {
           <nav className="stepper" aria-label="제작 단계">
             {workflowSteps.map((step, index) => (
               <span
-                aria-current={index === activeStepIndex ? "step" : undefined}
-                className={`step${index === activeStepIndex ? " active" : ""}${
-                  index < activeStepIndex ? " done" : ""
+                aria-current={isHydrated && index === activeStepIndex ? "step" : undefined}
+                className={`step${isHydrated && index === activeStepIndex ? " active" : ""}${
+                  isHydrated && index < activeStepIndex ? " done" : ""
                 }`}
                 key={step.id}
               >
-                <span className="step-dot">{index < activeStepIndex ? <Check size={10} /> : null}</span>
+                <span className="step-dot">{isHydrated && index < activeStepIndex ? <Check size={10} /> : null}</span>
                 {step.label}
               </span>
             ))}
           </nav>
           <div className="mobile-step-summary" aria-label="현재 단계">
-            <span>{activeStepIndex + 1}/{workflowSteps.length}</span>
-            <strong>{workflowSteps[activeStepIndex]?.label ?? "제작"}</strong>
+            <span>{isHydrated ? `${activeStepIndex + 1}/${workflowSteps.length}` : "-"}</span>
+            <strong>{isHydrated ? workflowSteps[activeStepIndex]?.label ?? "제작" : "불러오는 중"}</strong>
           </div>
           <div className="account-control" aria-label="계정">
             <span className={`account-state${session ? " ready" : ""}`}>{authState}</span>
@@ -1492,128 +1505,134 @@ export function WorkflowShell() {
 
         <section className="workspace">
           <div className="main-panel">
-            <p className="eyebrow">{stepMeta.kicker}</p>
-            <h1 className="page-title">{stepMeta.title}</h1>
-            <p className="lead">{stepMeta.lead}</p>
+            <p className="eyebrow">{displayStepMeta.kicker}</p>
+            <h1 className="page-title">{displayStepMeta.title}</h1>
+            <p className="lead">{displayStepMeta.lead}</p>
 
-            {draft.activeStepId === "genre" ? (
-              <GenreStep
-                selectedGenreId={draft.selectedGenreId}
-                onSelect={(selectedGenreId) => updateDraft({ selectedGenreId })}
-              />
-            ) : null}
-            {draft.activeStepId === "cover" ? (
-              <CoverStep cover={draft.cover} onChange={handleCoverChange} onClear={() => updateDraft({ cover: null, effectPlacement: null })} />
-            ) : null}
-            {draft.activeStepId === "title" ? (
-              <TitleStep
-                title={draft.title}
-                onChange={(title) =>
-                  updateDraft({
-                    title,
-                    layoutJobId: null,
-                    layoutJobStatus: null,
-                    layoutItems: [],
-                    layoutCanvas: null,
-                    styleJobId: null,
-                    styleJobStatus: null,
-                    styleResolution: null,
-                    generationJobId: null,
-                    generationJobStatus: null,
-                    generationCreditSource: null,
-                    generationSlots: [],
-                    selectedCandidateId: "",
-                    effectPlacement: null
-                  })
-                }
-              />
-            ) : null}
-            {draft.activeStepId === "layout" ? (
-              <LayoutStep
-                actionError={remoteError}
-                actionState={remoteState}
-                isBusy={isRemoteBusy}
-                isSignedIn={Boolean(session)}
-                layoutCanvas={draft.layoutCanvas}
-                layoutItems={draft.layoutItems}
-                layoutJobId={draft.layoutJobId}
-                layoutJobStatus={draft.layoutJobStatus}
-                onLayoutItemsChange={(layoutItems) => updateDraft({ layoutItems })}
-                title={draft.title}
-              />
-            ) : null}
-            {draft.activeStepId === "style" ? (
-              <StyleStep
-                actionError={remoteError}
-                actionState={remoteState}
-                isBusy={isRemoteBusy}
-                isSignedIn={Boolean(session)}
-                styleJobId={draft.styleJobId}
-                styleJobStatus={draft.styleJobStatus}
-                stylePrompt={draft.stylePrompt}
-                styleResolution={draft.styleResolution}
-                onChange={(stylePrompt) => updateDraft({ stylePrompt })}
-                onRequestAi={requestStyleJob}
-              />
-            ) : null}
-            {draft.activeStepId === "generation" ? (
-              <GenerationStep
-                actionError={remoteError}
-                actionState={remoteState}
-                assetUrls={assetUrls}
-                generationJobId={draft.generationJobId}
-                generationJobStatus={draft.generationJobStatus}
-                creditSummary={creditSummary}
-                generationSlots={draft.generationSlots}
-                isBusy={isRemoteBusy}
-                isSignedIn={Boolean(session)}
-                onAssetImageError={handleAssetImageError}
-                onRequestAi={requestGenerationJob}
-                onSelectCandidate={handleSelectCandidate}
-                selectedCandidateId={draft.selectedCandidateId}
-              />
-            ) : null}
-            {draft.activeStepId === "effects" ? (
-              <EffectsStep
-                assetUrls={assetUrls}
-                cover={draft.cover}
-                effectParams={draft.effectParams}
-                layerParams={draft.effectLayerParams}
-                effectPresetId={draft.effectPresetId}
-                placement={draft.effectPlacement}
-                generationSlots={draft.generationSlots}
-                selectedCandidateId={draft.selectedCandidateId}
-                title={draft.title}
-                onChangeEffectParams={(effectParams) => updateDraft({ effectParams })}
-                onChangeLayerParams={(effectLayerParams) => updateDraft({ effectLayerParams })}
-                onChangePreset={(effectPresetId) => updateDraft({ effectPresetId, effectParams: null, effectLayerParams: null })}
-                onPlacementChange={(effectPlacement) => updateDraft({ effectPlacement })}
-              />
-            ) : null}
-            {draft.activeStepId === "export" ? (
-              <ExportStep
-                assetUrls={assetUrls}
-                cover={draft.cover}
-                effectParams={draft.effectParams}
-                layerParams={draft.effectLayerParams}
-                effectPresetId={draft.effectPresetId}
-                placement={draft.effectPlacement}
-                generationSlots={draft.generationSlots}
-                creditSource={draft.generationCreditSource ?? "free"}
-                paidCredits={paidCredits}
-                projectId={draft.projectId}
-                session={session}
-                selectedCandidateId={draft.selectedCandidateId}
-                title={draft.title}
-                versionId={draft.versionId}
-                onCreditsChanged={() => {
-                  if (session) {
-                    void refreshCreditSummary(session, setCreditSummary);
-                  }
-                }}
-                onComplete={saveCompletedWork}
-              />
-            ) : null}
+            {!isHydrated ? (
+              <WorkflowLoadingState />
+            ) : (
+              <>
+                {draft.activeStepId === "genre" ? (
+                  <GenreStep
+                    selectedGenreId={draft.selectedGenreId}
+                    onSelect={(selectedGenreId) => updateDraft({ selectedGenreId })}
+                  />
+                ) : null}
+                {draft.activeStepId === "cover" ? (
+                  <CoverStep cover={draft.cover} onChange={handleCoverChange} onClear={() => updateDraft({ cover: null, effectPlacement: null })} />
+                ) : null}
+                {draft.activeStepId === "title" ? (
+                  <TitleStep
+                    title={draft.title}
+                    onChange={(title) =>
+                      updateDraft({
+                        title,
+                        layoutJobId: null,
+                        layoutJobStatus: null,
+                        layoutItems: [],
+                        layoutCanvas: null,
+                        styleJobId: null,
+                        styleJobStatus: null,
+                        styleResolution: null,
+                        generationJobId: null,
+                        generationJobStatus: null,
+                        generationCreditSource: null,
+                        generationSlots: [],
+                        selectedCandidateId: "",
+                        effectPlacement: null
+                      })
+                    }
+                  />
+                ) : null}
+                {draft.activeStepId === "layout" ? (
+                  <LayoutStep
+                    actionError={remoteError}
+                    actionState={remoteState}
+                    isBusy={isRemoteBusy}
+                    isSignedIn={Boolean(session)}
+                    layoutCanvas={draft.layoutCanvas}
+                    layoutItems={draft.layoutItems}
+                    layoutJobId={draft.layoutJobId}
+                    layoutJobStatus={draft.layoutJobStatus}
+                    onLayoutItemsChange={(layoutItems) => updateDraft({ layoutItems })}
+                    title={draft.title}
+                  />
+                ) : null}
+                {draft.activeStepId === "style" ? (
+                  <StyleStep
+                    actionError={remoteError}
+                    actionState={remoteState}
+                    isBusy={isRemoteBusy}
+                    isSignedIn={Boolean(session)}
+                    styleJobId={draft.styleJobId}
+                    styleJobStatus={draft.styleJobStatus}
+                    stylePrompt={draft.stylePrompt}
+                    styleResolution={draft.styleResolution}
+                    onChange={(stylePrompt) => updateDraft({ stylePrompt })}
+                    onRequestAi={requestStyleJob}
+                  />
+                ) : null}
+                {draft.activeStepId === "generation" ? (
+                  <GenerationStep
+                    actionError={remoteError}
+                    actionState={remoteState}
+                    assetUrls={assetUrls}
+                    generationJobId={draft.generationJobId}
+                    generationJobStatus={draft.generationJobStatus}
+                    creditSummary={creditSummary}
+                    generationSlots={draft.generationSlots}
+                    isBusy={isRemoteBusy}
+                    isSignedIn={Boolean(session)}
+                    onAssetImageError={handleAssetImageError}
+                    onRequestAi={requestGenerationJob}
+                    onSelectCandidate={handleSelectCandidate}
+                    selectedCandidateId={draft.selectedCandidateId}
+                  />
+                ) : null}
+                {draft.activeStepId === "effects" ? (
+                  <EffectsStep
+                    assetUrls={assetUrls}
+                    cover={draft.cover}
+                    effectParams={draft.effectParams}
+                    layerParams={draft.effectLayerParams}
+                    effectPresetId={draft.effectPresetId}
+                    placement={draft.effectPlacement}
+                    generationSlots={draft.generationSlots}
+                    selectedCandidateId={draft.selectedCandidateId}
+                    title={draft.title}
+                    onChangeEffectParams={(effectParams) => updateDraft({ effectParams })}
+                    onChangeLayerParams={(effectLayerParams) => updateDraft({ effectLayerParams })}
+                    onChangePreset={(effectPresetId) => updateDraft({ effectPresetId, effectParams: null, effectLayerParams: null })}
+                    onPlacementChange={(effectPlacement) => updateDraft({ effectPlacement })}
+                  />
+                ) : null}
+                {draft.activeStepId === "export" ? (
+                  <ExportStep
+                    assetUrls={assetUrls}
+                    cover={draft.cover}
+                    effectParams={draft.effectParams}
+                    layerParams={draft.effectLayerParams}
+                    effectPresetId={draft.effectPresetId}
+                    placement={draft.effectPlacement}
+                    generationSlots={draft.generationSlots}
+                    creditSource={draft.generationCreditSource ?? "free"}
+                    paidCredits={paidCredits}
+                    projectId={draft.projectId}
+                    session={session}
+                    selectedCandidateId={draft.selectedCandidateId}
+                    title={draft.title}
+                    versionId={draft.versionId}
+                    onCreditsChanged={() => {
+                      if (session) {
+                        void refreshCreditSummary(session, setCreditSummary);
+                      }
+                    }}
+                    onComplete={saveCompletedWork}
+                  />
+                ) : null}
+              </>
+            )}
           </div>
         </section>
 
@@ -1632,6 +1651,16 @@ export function WorkflowShell() {
         </footer>
       </div>
     </main>
+  );
+}
+
+function WorkflowLoadingState() {
+  return (
+    <div className="workflow-loading-state" role="status" aria-live="polite">
+      <Loader2 className="spin" size={24} />
+      <strong>작업을 불러오는 중</strong>
+      <span>저장된 작업 상태를 확인하고 있습니다.</span>
+    </div>
   );
 }
 
@@ -2959,7 +2988,7 @@ function readGenerationCreditSource(resultJson: Record<string, unknown>) {
 }
 
 async function refreshCreditSummary(session: Session, onSummary: (summary: CreditSummaryResponse) => void) {
-  const summary = await getCreditSummary(session);
+  const summary = await fetchAndCacheCreditSummary(session);
   onSummary(summary);
   return summary;
 }

@@ -5,7 +5,8 @@ import type { Route } from "next";
 import { ArrowLeft, CircleHelp, CreditCard, Gift, LogOut, ShieldCheck, UserRound } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
-import { getCreditSummary, getMe, type CreditSummaryResponse, type MeResponse } from "@/lib/api-client";
+import { getMe, type CreditSummaryResponse, type MeResponse } from "@/lib/api-client";
+import { clearCachedReadModels, fetchAndCacheCreditSummary, readCachedCreditSummary } from "@/lib/read-model-cache";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 export default function SettingsPage() {
@@ -13,6 +14,7 @@ export default function SettingsPage() {
   const [isAuthChecked, setIsAuthChecked] = useState(!supabase);
   const [profile, setProfile] = useState<MeResponse | null>(null);
   const [credits, setCredits] = useState<CreditSummaryResponse | null>(null);
+  const [isLoadingCredits, setIsLoadingCredits] = useState(false);
 
   useEffect(() => {
     if (!supabase) {
@@ -44,23 +46,35 @@ export default function SettingsPage() {
     if (!session) {
       setProfile(null);
       setCredits(null);
+      setIsLoadingCredits(false);
       return;
     }
     let isCancelled = false;
-    Promise.all([getMe(session), getCreditSummary(session)])
+    const cachedCredits = readCachedCreditSummary(session.user.id);
+    if (cachedCredits) {
+      setCredits(cachedCredits);
+    }
+    setIsLoadingCredits(true);
+    Promise.all([getMe(session), fetchAndCacheCreditSummary(session)])
       .then(([nextProfile, nextCredits]) => {
         if (!isCancelled) {
           setProfile(nextProfile);
           setCredits(nextCredits);
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoadingCredits(false);
+        }
+      });
     return () => {
       isCancelled = true;
     };
   }, [session]);
 
   async function signOut() {
+    clearCachedReadModels(session?.user.id);
     await supabase?.auth.signOut();
   }
 
@@ -115,7 +129,7 @@ export default function SettingsPage() {
             <dl className="info-list">
               <div>
                 <dt>오늘 남은 횟수</dt>
-                <dd>{credits ? `${credits.free_generation_remaining}회` : "확인 중"}</dd>
+                <dd>{credits ? `${credits.free_generation_remaining}회` : isLoadingCredits ? "확인 중" : "-"}</dd>
               </div>
               <div>
                 <dt>제공 주기</dt>
@@ -132,7 +146,7 @@ export default function SettingsPage() {
             <dl className="info-list">
               <div>
                 <dt>잔액</dt>
-                <dd>{credits ? credits.paid_credit_balance : 0}</dd>
+                <dd>{credits ? credits.paid_credit_balance : isLoadingCredits ? "확인 중" : 0}</dd>
               </div>
               <div>
                 <dt>사용처</dt>

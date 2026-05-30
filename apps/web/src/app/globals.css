@@ -1804,6 +1804,69 @@ button:disabled {
   color: #b42318;
 }
 
+.skeleton-card {
+  pointer-events: none;
+}
+
+.skeleton-pill,
+.skeleton-line {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #eef2f7 0%, #f8fafc 42%, #e7edf5 72%, #eef2f7 100%);
+  background-size: 220% 100%;
+  animation: globalSkeletonPulse 1.2s ease-in-out infinite;
+}
+
+.skeleton-pill {
+  width: 88px;
+  height: 24px;
+}
+
+.skeleton-line {
+  height: 14px;
+}
+
+.skeleton-line.wide {
+  width: 72%;
+  height: 20px;
+}
+
+.skeleton-line.medium {
+  width: 46%;
+}
+
+.skeleton-line.short {
+  width: 34%;
+}
+
+.workflow-loading-state {
+  display: grid;
+  min-height: 360px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.workflow-loading-state strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+@keyframes globalSkeletonPulse {
+  0% {
+    background-position: 120% 0;
+  }
+
+  100% {
+    background-position: -120% 0;
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
